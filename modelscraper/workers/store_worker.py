@@ -1,4 +1,5 @@
 from multiprocessing import Process
+from threading import Thread
 
 
 unsupported = 'The "{}" function is not supported by the {} adapter'
@@ -25,9 +26,9 @@ class StoreWorker(Process):
                 if func:
                     result = func(template.objects, **template.kws)
 
-            if not result:
-                print('Failed with template', template.name)
-                print(template)
+                    if not result:
+                        print('Failed with template', template.name)
+                        print(template)
         print('stopping store')
 
     def create(self, objects, *args, **kwargs):
