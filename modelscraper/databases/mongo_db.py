@@ -15,7 +15,7 @@ class MongoDB(StoreWorker):
     def __init__(self, in_q=None):
         super(MongoDB, self).__init__(in_q=in_q)
         # TODO add connection details
-        self.client = MongoClient()
+        self.client = MongoClient(connect=False)
 
     def _handle(self, template):
         self.db = self.client[template.db]
@@ -65,4 +65,4 @@ class MongoDB(StoreWorker):
         if not key:
             return ({'url': obj.url} for obj in objects)
         else:
-            return ({key: getattr(key, obj, '')} for obj in objects)
+            return ({key: obj.attrs[key].value} for obj in objects)
