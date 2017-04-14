@@ -5,12 +5,11 @@ from queue import Empty
 from functools import reduce
 from datetime import datetime
 
-from pybloom import ScalableBloomFilter
 import lxml.html as lxhtml
 from scrapely import Scraper
 
 
-class BaseParser(Process):
+class BaseParser:
     '''
     This class implements the methods:
         _gen_source: generate a source if the template has that specified.
@@ -27,16 +26,7 @@ class BaseParser(Process):
         self.name = parent.name
         self.domain = parent.domain
         self.templates = templates
-        self.in_q = JoinableQueue()
-        self.source_q = parent.source_q
-        self.store_q = parent.store_q
         self.db = parent.db
-        self.seen = ScalableBloomFilter()
-        self.forwarded = ScalableBloomFilter()
-        self.forward_q = parent.forward_q
-        self.to_parse = parent.to_parse
-        self.parsed = 0
-        self.average = []
 
         for key, value in kwargs.items():
             setattr(self, key, value)
@@ -45,57 +35,28 @@ class BaseParser(Process):
         # parser.
         self._set_attr_funcs()
 
-    def run(self):
-        while True:
-            try:
-                source = self.in_q.get(timeout=20)
-            except Empty:
-                print('timed out parser get')
-                if self.parsed.value == self.to_parse.value:
-                    with self.parsed.get_lock():
-                        self.parsed.value = 0
-                    break
+    def parse(self, source):
+        try:
+            if getattr(self, '_prepare_data', None):
+                data = self._prepare_data(source)
 
-            data = source.data
-            self.seen.add(source.url)
-            try:
-                if getattr(self, '_prepare_data', None):
-                    data = self._prepare_data(source)
+            for template in self.templates:
+                extracted = self._extract(data, template)
+                template.objects = list(
+                    self._gen_objects(template, extracted, source))
 
-                for template in self.templates:
-                    self.new_sources = []
-                    extracted = self._extract(data, template)
-                    template.objects = list(
-                        self._gen_objects(template, extracted, source))
+                if template.preview:
+                    print(data.text_content())
+                    print(template.objects)
 
-                    if template.preview:
-                        print(template.objects[0])
+                if not template.objects and template.required:
+                    print(template.selector, 'yielded nothing, quitting.')
+                    self.parent.reset_source_queue()
 
-                    if not template.objects and template.required:
-                        print(template.selector, 'yielded nothing, quitting.')
-                        self._handle_empty()
+                yield template.to_store()
 
-                    if template.db_type:
-                        self.store_q.put(template.to_store())
-
-                    for new_source in self.new_sources:
-                        self._gen_source(*new_source)
-
-                    del template.objects
-
-            except Exception as E:
-                print('parser error', E)
-
-            with self.parsed.get_lock():
-                self.parsed.value += 1
-
-            if self.parsed.value == self.to_parse.value:
-                with self.parsed.get_lock():
-                    self.parsed.value = 0
-                self.in_q.task_done()
-                break
-
-            self.in_q.task_done()
+        except Exception as E:
+            print('parser error', E)
 
     def _gen_objects(self, template, extracted, source):
         '''
@@ -137,6 +98,7 @@ class BaseParser(Process):
                     continue
 
             # Create a new Source from the template if desirable
+            # TODO fix this.
             if template.source and getattr(self, '_source_from_object', None):
                 objct.source = template.source()
                 self._source_from_object(objct, source)
@@ -157,7 +119,7 @@ class BaseParser(Process):
 
             # Create a request from the attribute if desirable
             if attr.source and parsed:
-                self.new_sources.append((objct, attr, parsed))
+                self.parent.new_sources.append((objct, attr, parsed))
 
             yield attr._replicate(name=attr.name, value=parsed)
 
@@ -177,72 +139,11 @@ class BaseParser(Process):
             return self._apply_funcs(parsed, parse_funcs[1:],
                                      kws[1:] if kws else [{}])
 
-    def _gen_source(self, objct, attr, parsed):
-        if type(parsed) != list:
-            parsed = [parsed]
-
-        for value in parsed:
-            # for now only "or" is supported.
-            if attr.source_condition and \
-                    not any(
-                        self._evaluate_condition(objct,
-                                                 attr.source_condition)
-                    ):
-                continue
-
-            new_source = attr.source(
-                url=self._apply_src_template(attr.source, value))
-
-            if attr.attr_condition and \
-                    self.value_is_new(objct, value, attr.attr_condition):
-                    self._add_source(new_source)
-            else:
-                self._add_source(new_source)
-
-    def value_is_new(self, objct, uri, name):
-        db_objct = self.db.read(uri, objct)
-        if db_objct and db_objct.attrs.get(name):
-            if db_objct.attrs[name].value != objct.attrs[name].value:
-                return True
-            return False
-
-    def _apply_src_template(self, source, url):
-        if source.src_template:
-            # use formatting notation in the src_template
-            return source.src_template.format(url)
-        return url
-
     def _value(self, parsed, index=None):
         if parsed:
             if len(parsed) == 1:
                 return parsed[0]
             return parsed[index] if index else parsed
-
-    def _evaluate_condition(self, objct, condition, **kwargs):
-        # TODO add "in", and other possibilities.
-        for name, cond in condition.items():
-            values = objct.attrs[name].value
-            # Wrap the value in a list without for example seperating the
-            # characters.
-            print(values)
-            values = [values] if type(values) != list else values
-            for val in values:
-                if val and eval(str(val) + cond, {}, {}):
-                    yield True
-                else:
-                    yield False
-
-    def _add_source(self, source):
-        if source.url and (source.url not in self.seen or source.duplicate) \
-                and source.url not in self.forwarded:
-            if source.active:
-                with self.to_parse.get_lock():
-                    self.to_parse.value += 1
-                self.source_q.put(source)
-                self.seen.add(source.url)
-            else:
-                self.forward_q.put(source)
-                self.forwarded.add(source.url)
 
     def _handle_empty(self):
         while not self.in_q.empty():
@@ -325,7 +226,7 @@ class HTMLParser(BaseParser):
                 new_source.url = self._apply_src_template(source, source.url)
 
         if new_source.copy_attrs:
-            new_source = self._copy_attrs(objcts, new_source)
+            new_source = self._copy_attrs(objct, new_source)
 
         if new_source.parent:
             new_source.attrs['_parent'] = objct.attrs['url']._replicate()
@@ -522,11 +423,8 @@ class HTMLParser(BaseParser):
 
 
 class JSONParser(BaseParser):
-    def __init__(self, data=None, selector=None):
-        self.data = json.loads(data)
-        if selector:
-            for key in selector:
-                self.data = self.data[key]
+    def __init__(self, **kwargs):
+        super(JSONParser, self).__init__(**kwargs)
 
     def sel_key(self, selector, key=''):
         return self.data.get(key)
