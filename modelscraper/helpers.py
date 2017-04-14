@@ -60,12 +60,13 @@ def source_conv(source):
 '''
 
 
-def func_conv(func_list):
-    assert type(func_list) == list or str, "Function list should be " \
+def astuple(something):
+    assert type(something) == str or tuple, "Function list should be " \
         "a list or a string containing comma seperated function names."
-    if type(func_list) == list:
-        return func_list
-    return [func_list]
+    if something is not None:
+        if type(something) == tuple:
+            return something
+        return (something,)
 
 
 def attr_dict(attrs):
