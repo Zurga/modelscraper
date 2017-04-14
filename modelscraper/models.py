@@ -26,7 +26,6 @@ class Run:
     n_workers = attr.ib(default=1)
     active = attr.ib(default=True)
 
-
 @attr.s
 class Source(BaseModel):
     url = attr.ib('')
