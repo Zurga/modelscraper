@@ -6,7 +6,11 @@ from functools import reduce
 from datetime import datetime
 
 import lxml.html as lxhtml
+from lxml.etree import XPath
+from lxml.cssselect import CSSSelector, SelectorSyntaxError
 from scrapely import Scraper
+
+from .helpers import astuple
 
 
 class BaseParser:
@@ -25,38 +29,56 @@ class BaseParser:
         super(BaseParser, self).__init__()
         self.name = parent.name
         self.domain = parent.domain
-        self.templates = templates
         self.db = parent.db
+        # Set all selectors and the functions of the attrs to the correct
+        # functions and selectors of the parser.
+        self.templates = self._prepare_templates(templates)
 
         for key, value in kwargs.items():
             setattr(self, key, value)
 
-        # Set all the functions of the attrs to the correct functions of the
-        # parser.
-        self._set_attr_funcs()
+    def _prepare_data(self, source):
+        raise NotImplementedError
+
+    def _extract(self, data, template):
+        raise NotImplementedError
+
+    def _apply_selector(self, selector, data):
+        raise NotImplementedError
+
+    def _get_selector(self, model):
+        raise NotImplementedError
 
     def parse(self, source):
-        try:
-            if getattr(self, '_prepare_data', None):
-                data = self._prepare_data(source)
+        # try:
+        data = self._prepare_data(source)
 
-            for template in self.templates:
-                extracted = self._extract(data, template)
-                template.objects = list(
-                    self._gen_objects(template, extracted, source))
+        for template in self.templates:
+            extracted = self._extract(data, template)
+            template.objects = list(
+                self._gen_objects(template, extracted, source))
 
-                if template.preview:
-                    print(data.text_content())
-                    print(template.objects)
+            if template.preview:
+                print(template.objects)
 
-                if not template.objects and template.required:
-                    print(template.selector, 'yielded nothing, quitting.')
-                    self.parent.reset_source_queue()
+            if not template.objects and template.required:
+                print(template.selector, 'yielded nothing, quitting.')
+                self.parent.reset_source_queue()
 
-                yield template.to_store()
+            yield template.to_store()
 
-        except Exception as E:
-            print('parser error', E)
+        # except Exception as E:
+        #     print('parser error', E)
+
+    def _prepare_templates(self, templates):
+        for template in templates:
+            template.selector = self._get_selector(template)
+            for attr in template.attrs.values():
+                attr.func = self._get_funcs(attr.func)
+                attr.selector = self._get_selector(attr)
+
+    def _get_funcs(self, func_names):
+        return tuple(getattr(self, f, f) for f in func_names)
 
     def _gen_objects(self, template, extracted, source):
         '''
@@ -65,7 +87,6 @@ class BaseParser:
         that create the sources from Attrs or Templates (_gen_source,
         _source_from_object).
         '''
-
         for data in extracted:
             # Create a new objct from the template.
             objct = template._replicate(name=template.name, url=source.url)
@@ -94,7 +115,7 @@ class BaseParser:
                     continue
                 else:
                     print('Template', template.name, 'failed')
-                    print(data.text_content())
+                    print('data', data)
                     continue
 
             # Create a new Source from the template if desirable
@@ -107,10 +128,7 @@ class BaseParser:
 
     def _gen_attrs(self, attrs, objct, data):
         for attr in attrs:
-            if attr.selector:
-                elements = attr.selector(data)
-            else:
-                elements = [data]
+            elements = self._apply_selector(attr.selector, data)
 
             # get the parse functions and recursively apply them.
             parsed = self._apply_funcs(elements, attr.func, attr.kws)
@@ -122,14 +140,6 @@ class BaseParser:
                 self.parent.new_sources.append((objct, attr, parsed))
 
             yield attr._replicate(name=attr.name, value=parsed)
-
-    def _set_attr_funcs(self):
-        for template in self.templates:
-            for attr in template.attrs.values():
-                attr.func = [getattr(self, f, f) for f in attr.func]
-                if type(attr.kws) != list:
-                    attr.kws = [attr.kws]
-
 
     def _apply_funcs(self, elements, parse_funcs, kws):
         if len(parse_funcs) == 1 and hasattr(parse_funcs, '__iter__'):
@@ -153,6 +163,28 @@ class BaseParser:
                 continue
             self.source_q.task_done()
 
+    def _copy_attrs(self, objct, source):
+        # Copy only the attribute with the key
+        if type(source.copy_attrs) == str:
+            if objct.attrs.get(source.copy_attrs):
+                attr = objct.attrs[copy_attrs]._replicate()
+                new_source.attrs[copy_attrs] = attr
+            else:
+                raise Exception('Could not copy attr', copy_attrs)
+
+        # Copy a list of attributes
+        elif hasattr(source.copy_attrs, 'iter'):
+            for attr_name in source.copy_attrs:
+                attr = objct.attrs.get(attr_name)
+                if attr:
+                    new_source.attrs[attr_name] = attr
+                else:
+                    raise Exception('Could not copy all attrs', copy_attrs)
+
+        else: # Copy all the attributes.
+            new_source.attrs = {key: attr._replicate() for key, attr in
+                                objct.attrs.items()}
+        return new_source
 
 class HTMLParser(BaseParser):
     '''
@@ -185,17 +217,28 @@ class HTMLParser(BaseParser):
         data.make_links_absolute(self.domain)
         return data
 
+    def _get_selector(self, model):
+        assert len(model.selector) == 1, "Only one selector can be used."
+        try:
+            return CSSSelector(model.selector[0])
+        except SelectorSyntaxError:
+            return XPath(model.selector[0])
+        except:
+            raise Exception('Not a valid css or xpath selector', selector)
+
+    def _apply_selector(self, selector, data):
+        if selector:
+            return selector(data)
+        else:
+            return (data,)
+
     def _extract(self, html, template):
         # We have normal html
         if not template.js_regex:
             if html is not None:
-                if template.selector:
-                    extracted = template.selector(html)
-                else:
-                    extracted = [html]
+                extracted = self._apply_selector(template, html)
             else:
                 extracted = []
-
         # We want to extract a json_variable from the server
         else:
             regex = re.compile(template.js_regex)
@@ -237,29 +280,6 @@ class HTMLParser(BaseParser):
             new_source.params = attrs
 
         self._add_source(new_source)
-
-    def _copy_attrs(self, objct, source):
-        # Copy only the attribute with the key
-        if type(source.copy_attrs) == str:
-            if objct.attrs.get(source.copy_attrs):
-                attr = objct.attrs[copy_attrs]._replicate()
-                new_source.attrs[copy_attrs] = attr
-            else:
-                raise Exception('Could not copy attr', copy_attrs)
-
-        # Copy a list of attributes
-        elif hasattr(source.copy_attrs, 'iter'):
-            for attr_name in source.copy_attrs:
-                attr = objct.attrs.get(attr_name)
-                if attr:
-                    new_source.attrs[attr_name] = attr
-                else:
-                    raise Exception('Could not copy all attrs', copy_attrs)
-
-        else: # Copy all the attributes.
-            new_source.attrs = {key: attr._replicate() for key, attr in
-                                objct.attrs.items()}
-        return new_source
 
     def _fallback(self, template, html, source):
         if not self.scrapely_parser:
@@ -304,13 +324,15 @@ class HTMLParser(BaseParser):
             text = [t.lstrip().rstrip() for t in text if t]
 
             if replacers:
-                text = [re.sub('{}'.format('|'.join(replacers)),
-                            substitute, t) for t in text]
+                regex = re.compile('|'.join(replacers))
+                text = [regex.sub(substitute, t) for t in text]
+
             if regex:
-                text = [f for t in text for f in re.findall(regex, t)]
-                # set types correctly
+                regex = re.compile(regex)
+                text = [f for t in text for f in regex.findall(t)]
+
             if needle:
-                if not all([re.match(needle, t) in t for te in text]):
+                if not all([re.match(needle, t) in t for t in text]):
                     return None
 
             if numbers:
@@ -425,6 +447,81 @@ class HTMLParser(BaseParser):
 class JSONParser(BaseParser):
     def __init__(self, **kwargs):
         super(JSONParser, self).__init__(**kwargs)
+        for key, value in kwargs.items():
+            setattr(self, key, value)
 
-    def sel_key(self, selector, key=''):
-        return self.data.get(key)
+    def _prepare_data(self, source):
+        data = json.loads(source.data)
+        if source.json_key:
+            data = reduce(dict.get, source.json_key, data)
+        return data
+
+    def _extract(self, data, template):
+        # TODO add the possibility to parse lists
+        if template.selector:
+            return self._apply_selector(template.selector, data)
+        else:
+            if type(data) != list:
+                return [data]
+            return data
+
+    def _apply_selector(self, selector, data):
+        if selector:
+            if len(selector) == 0:
+                if type(data) != list:
+                    return [data]
+                return data
+            if type(data) == dict:
+                if selector[0] in data:
+                    return self._apply_selector(selector[1:], data[selector[0]])
+                else:
+                    return []
+            if type(data) == list:
+                data = [d.get(selector[0]) for d in data]
+                if all(data):
+                    return self._apply_selector(selector[1:], data)
+                else:
+                    return []
+        else:
+            if type(data) != list:
+                return [data]
+            return data
+
+    def _get_selector(self, model):
+        return astuple(model.selector)
+
+    def sel_text(self, elements, replacers=None, substitute='', regex: str='',  # noqa
+                numbers: bool=False, index=None, needle=None, all_text=True,
+                split='', as_list=False, debug=False):  # noqa
+        '''
+        Select all text for a given selector.
+        '''
+        try:
+            text = [t.lstrip().rstrip() for t in elements if t]
+
+            if replacers:
+                regex = re.compile('|'.join(replacers))
+                text = [regex.sub(substitute, t) for t in text]
+
+            if regex:
+                regex = re.compile(regex)
+                text = [f for t in text for f in regex.findall(t)]
+                # set types correctly
+            if needle:
+                regex = re.compile(needle)
+                if not all([regex.match(t) in t for t in text]):
+                    return None
+
+            if numbers:
+                text = [int(''.join([c for c in t if c.isdigit() and c]))
+                        for t in text if t and any(map(str.isdigit, t))]
+
+            if text:
+                if debug:
+                    print(text)
+                return self._value(text, index)
+        except Exception as e:
+            print('sel_text', elements, e)
+
+    def sel_dict(self, elements):
+        return elements
