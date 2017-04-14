@@ -17,7 +17,7 @@ class WebSource(Thread):
             self.name = parent.name + str(id) + 'WebSource'
             self.domain = parent.domain
             self.in_q = parent.source_q
-            self.out_q = parent.parser.in_q
+            self.out_q = parent.parse_q
             self.retries = retries
             self.session = parent.session
             self.user_agent = parent.user_agent
@@ -62,7 +62,7 @@ class WebSource(Thread):
                     new_mean = mean(times)
                     if abs(new_mean - self.last_mean) > 0.10:
                 '''
-                # print('{}'.format(source.url), page, source.method, source.data)
+                # print(id(self), '{}'.format(source.url), page, source.method, source.data)
 
                 if page and source.parse:
                     source.data = page.text
@@ -85,6 +85,5 @@ class WebSource(Thread):
 
             except Exception as E:
                 print(E)
-                with self.to_parse.get_lock():
-                    self.to_parse.value -= 1
+                self.to_parse -= 1
             self.in_q.task_done()
