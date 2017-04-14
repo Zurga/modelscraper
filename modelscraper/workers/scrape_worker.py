@@ -179,7 +179,6 @@ class ScrapeWorker(Process):
             values = objct.attrs[name].value
             # Wrap the value in a list without for example seperating the
             # characters.
-            print(values)
             values = [values] if type(values) != list else values
             for val in values:
                 if val and eval(str(val) + cond, {}, {}):
