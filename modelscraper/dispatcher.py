@@ -1,5 +1,6 @@
 from . import workers
 from multiprocessing import Queue
+#from queue import Queue
 from . import databases
 from collections import defaultdict
 
@@ -33,12 +34,6 @@ class Dispatcher:
 #        except KeyboardInterrupt:
 
         # TODO fix that the seen urls go to the databases.
-        print('Quitting and saving the seen urls')
-        for name, scraper in self.scrapers.items():
-            with scraper.lock:
-                with open(name + '_seen_urls', 'w') as fle:
-                    fle.writelines(scraper.seen)
-
         print('joined')
 
         self.store_q.put(None)
