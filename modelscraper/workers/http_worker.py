@@ -68,6 +68,8 @@ class WebSource(Thread):
                     source.data = page.text
                     self.out_q.put(source)
                 else:
+                    print(source.url)
+                    print(page)
                     print('No parsing required')
 
                 time.sleep(self.time_out)
