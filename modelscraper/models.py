@@ -5,7 +5,7 @@ from attr.validators import instance_of
 from .workers.http_worker import WebSource
 from .parsers import HTMLParser
 from .workers.store_worker import StoreWorker
-from .helpers import selector_converter, attr_dict, func_conv
+from .helpers import selector_converter, attr_dict, astuple
 
 
 @attr.s
@@ -38,9 +38,9 @@ class Source(BaseModel):
     params = attr.ib(attr.Factory(dict))
     src_template = attr.ib('{}')
     retries = attr.ib(10)
-    json_key = attr.ib(None)
+    json_key = attr.ib(None, convert=astuple)
     duplicate = attr.ib(False)
-    copy_attrs = attr.ib(False)
+    copy_attrs = attr.ib(None, convert=astuple)
     attr_condition = attr.ib('')
     parent = attr.ib(False)
 
@@ -59,16 +59,16 @@ class Attr(BaseModel):
     The value for the attribute is obtained by applying the func
     on the element obtained through the selector.
     '''
-    selector = attr.ib(default=None, convert=selector_converter)
+    selector = attr.ib(default=None, convert=astuple)
     name = attr.ib(default=None)
     value = attr.ib(default=None)
-    func = attr.ib(default=attr.Factory(list), convert=func_conv,
+    func = attr.ib(default=tuple, convert=astuple,
                    metadata={Run.parser: 1})
     attr_condition = attr.ib(default={})
     source_condition = attr.ib(default={})
     source = attr.ib(default=None, convert=source_conv,
                      metadata={'Source': 1})
-    kws = attr.ib(default=attr.Factory(dict))
+    kws = attr.ib(default=attr.Factory(dict), convert=astuple)
     type = attr.ib(default=None)
 
 
@@ -85,7 +85,7 @@ class Template(BaseModel):
     name = attr.ib(default='')
     partial = attr.ib(default=False)
     required = attr.ib(default=False)
-    selector = attr.ib(default='', convert=selector_converter)
+    selector = attr.ib(default=None, convert=astuple)
     args = attr.ib(default=tuple)
     attrs = attr.ib(default=attr.Factory(dict), convert=attr_dict)
     url = attr.ib(default='')
