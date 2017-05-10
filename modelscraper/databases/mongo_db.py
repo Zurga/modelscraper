@@ -20,7 +20,6 @@ class MongoDB(StoreWorker):
     def _handle(self, template):
         self.db = self.client[template.db]
         self.coll = self.db[template.table]
-        print('storing', template)
 
         if template.objects:
             # Call to the functions in this class
