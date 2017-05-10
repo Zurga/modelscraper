@@ -70,6 +70,7 @@ class Attr(BaseModel):
                      metadata={'Source': 1})
     kws = attr.ib(default=attr.Factory(dict), convert=astuple)
     type = attr.ib(default=None)
+    value_template = attr.ib(default=None)
 
 
 @attr.s
@@ -90,6 +91,14 @@ class Template(BaseModel):
     attrs = attr.ib(default=attr.Factory(dict), convert=attr_dict)
     url = attr.ib(default='')
     preview = attr.ib(default=False)
+
+    def __attrs_post_init__(self):
+        if self.db_type and not (self.db and self.table):
+            raise Exception(self.name +
+                'Database type is set, but not the names and the table')
+        elif (self.db or self.table) and not self.db_type:
+            raise Exception(self.name +
+                'Database name and table are set, but not the database type')
 
     def to_dict(self):
         return {'url': self.url, **self.attrs_to_dict()} # noqa
