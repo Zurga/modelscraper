@@ -55,5 +55,6 @@ class Dispatcher:
 
         for thread, templates in db_threads.items():
             # TODO start the right database threads
+            print('starting', thread)
             store_thread = databases._threads[thread](in_q=self.store_q)
             store_thread.start()
