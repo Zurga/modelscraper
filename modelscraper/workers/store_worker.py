@@ -20,6 +20,7 @@ class StoreWorker(Process):
 
             # Set up the environment before storing the objects.
             self.res = self._handle(template)
+            '''
             if template.objects:
                 # Call to the functions in this class
                 func = getattr(self, template.func, None)
@@ -29,6 +30,7 @@ class StoreWorker(Process):
                     if not result:
                         print('Failed with template', template.name)
                         print(template)
+            '''
         print('stopping store')
 
     def create(self, objects, *args, **kwargs):
