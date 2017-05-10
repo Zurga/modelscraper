@@ -132,6 +132,7 @@ class BaseParser:
 
             # get the parse functions and recursively apply them.
             parsed = self._apply_funcs(elements, attr.func, attr.kws)
+
             if attr.type and type(parsed) != attr.type:
                 print('Not the same type')
 
@@ -218,13 +219,15 @@ class HTMLParser(BaseParser):
         return data
 
     def _get_selector(self, model):
-        assert len(model.selector) == 1, "Only one selector can be used."
-        try:
-            return CSSSelector(model.selector[0])
-        except SelectorSyntaxError:
-            return XPath(model.selector[0])
-        except:
-            raise Exception('Not a valid css or xpath selector', selector)
+        # assert len(model.selector) == 1, "Only one selector can be used."
+        if model.selector:
+            try:
+                return CSSSelector(model.selector[0])
+            except SelectorSyntaxError:
+                return XPath(model.selector[0])
+            except:
+                raise Exception('Not a valid css or xpath selector', selector)
+        return None
 
     def _apply_selector(self, selector, data):
         if selector:
@@ -236,7 +239,7 @@ class HTMLParser(BaseParser):
         # We have normal html
         if not template.js_regex:
             if html is not None:
-                extracted = self._apply_selector(template, html)
+                extracted = self._apply_selector(template.selector, html)
             else:
                 extracted = []
         # We want to extract a json_variable from the server
@@ -264,9 +267,9 @@ class HTMLParser(BaseParser):
             url = objct.attrs.get('url')
 
             if url and not isinstance(url, list):
-                new_source.url = self._apply_src_template(source, url.value)
+                new_source.url = self.parent._apply_src_template(source, url.value)
             else:
-                new_source.url = self._apply_src_template(source, source.url)
+                new_source.url = self.parent._apply_src_template(source, source.url)
 
         if new_source.copy_attrs:
             new_source = self._copy_attrs(objct, new_source)
@@ -279,7 +282,7 @@ class HTMLParser(BaseParser):
         else:
             new_source.params = attrs
 
-        self._add_source(new_source)
+        self.parent._add_source(new_source)
 
     def _fallback(self, template, html, source):
         if not self.scrapely_parser:
@@ -345,7 +348,6 @@ class HTMLParser(BaseParser):
                 return self._value(text, index)
         except Exception as e:
             print(elements, e)
-
 
     def sel_table(self, elements, columns: int=2, offset: int=0):
         '''
