@@ -10,7 +10,7 @@ from lxml.etree import XPath
 from lxml.cssselect import CSSSelector, SelectorSyntaxError
 from scrapely import Scraper
 
-from .helpers import astuple
+from .helpers import str_as_tuple
 
 
 class BaseParser:
@@ -50,7 +50,6 @@ class BaseParser:
         raise NotImplementedError
 
     def parse(self, source):
-        # try:
         data = self._prepare_data(source)
 
         for template in self.templates:
@@ -67,9 +66,6 @@ class BaseParser:
 
             yield template.to_store()
 
-        # except Exception as E:
-        #     print('parser error', E)
-
     def _prepare_templates(self, templates):
         for template in templates:
             template.selector = self._get_selector(template)
@@ -78,7 +74,7 @@ class BaseParser:
                 attr.selector = self._get_selector(attr)
 
     def _get_funcs(self, func_names):
-        return tuple(getattr(self, f, f) for f in func_names)
+        return tuple(getattr(self, f) for f in func_names)
 
     def _gen_objects(self, template, extracted, source):
         '''
@@ -136,19 +132,21 @@ class BaseParser:
             if attr.type and type(parsed) != attr.type:
                 print('Not the same type')
 
+            new_attr = attr._replicate(name=attr.name, value=parsed, func='',
+                            selector=None, source=attr.source)
+
             # Create a request from the attribute if desirable
             if attr.source and parsed:
-                self.parent.new_sources.append((objct, attr, parsed))
+                self.parent.new_sources.append((objct, new_attr))
 
-            yield attr._replicate(name=attr.name, value=parsed)
+            yield new_attr
 
     def _apply_funcs(self, elements, parse_funcs, kws):
         if len(parse_funcs) == 1 and hasattr(parse_funcs, '__iter__'):
             return parse_funcs[0](elements, **kws[0])
         else:
             parsed = parse_funcs[0](elements, **kws[0])
-            return self._apply_funcs(parsed, parse_funcs[1:],
-                                     kws[1:] if kws else [{}])
+            return self._apply_funcs(parsed, parse_funcs[1:], kws[1:])
 
     def _value(self, parsed, index=None):
         if parsed:
@@ -490,7 +488,7 @@ class JSONParser(BaseParser):
             return data
 
     def _get_selector(self, model):
-        return astuple(model.selector)
+        return str_as_tuple(model.selector)
 
     def sel_text(self, elements, replacers=None, substitute='', regex: str='',  # noqa
                 numbers: bool=False, index=None, needle=None, all_text=True,
