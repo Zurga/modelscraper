@@ -51,6 +51,7 @@ class ScrapeWorker(Process):
                 self.spawn_workforce(run)
                 self.add_sources(run)
                 self.parse_sources()
+
             if run.repeat:
                 self.runs.append(run)
                 print('Repeating run', i-1)
@@ -123,11 +124,8 @@ class ScrapeWorker(Process):
                 self.source_q.put(source)
                 self.to_parse += 1
 
-    def _gen_source(self, objct, attr, parsed):
-        if type(parsed) != list:
-            parsed = [parsed]
-
-        for value in parsed:
+    def _gen_source(self, objct, attr):
+        for value in attr.value:
             # for now only "or" is supported.
             if attr.source_condition and \
                     not any(
@@ -136,15 +134,24 @@ class ScrapeWorker(Process):
                     ):
                 continue
 
-            new_source = attr.source(
-                url=self._apply_src_template(attr.source, value))
+            url = self._apply_src_template(attr.source, value)
+            attrs = []
 
             if attr.source.copy_attrs:
-                name = attr.source.copy_attrs
-                new_source.attrs[name] = objct.attrs[name]()
+                attrs_to_copy = attr.source.copy_attrs
+                assert all(attr in objct.attrs for attr in attrs_to_copy)
+                if type(attrs_to_copy) == dict:
+                    # We store the copied attributes under different names.
+                    for key, value in attrs_to_copy.items():
+                        attrs.append(objct.attrs[key](name=value))
+                else:
+                    for key in attrs_to_copy:
+                        attrs.append(objct.attrs[key]())
 
-            if attr.attr_condition and \
-                    self.value_is_new(objct, value, attr.attr_condition):
+            new_source = attr.source(url=url, attrs=attrs)
+
+            if attr.attr_condition:
+                if self.value_is_new(objct, value, attr.attr_condition):
                     self._add_source(new_source)
             else:
                 self._add_source(new_source)
@@ -193,7 +200,6 @@ class ScrapeWorker(Process):
             except Empty:
                 continue
             self.source_q.task_done()
-
 
     def show_progress(self):
         # os.system('clear')
