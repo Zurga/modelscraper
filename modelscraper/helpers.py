@@ -60,11 +60,9 @@ def source_conv(source):
 '''
 
 
-def astuple(something):
-    assert type(something) == str or tuple, "Function list should be " \
-        "a list or a string containing comma seperated function names."
+def str_as_tuple(something):
     if something is not None:
-        if type(something) == tuple:
+        if type(something) in [list, dict, tuple]:
             return something
         return (something,)
 
