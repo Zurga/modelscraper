@@ -5,7 +5,7 @@ from attr.validators import instance_of
 from .workers.http_worker import WebSource
 from .parsers import HTMLParser
 from .workers.store_worker import StoreWorker
-from .helpers import selector_converter, attr_dict, astuple
+from .helpers import selector_converter, attr_dict, str_as_tuple
 
 
 @attr.s
@@ -15,6 +15,7 @@ class BaseModel(object):
 
     def __call__(self, **kwargs):
         return self.__class__(**{**self.__dict__, **kwargs})  # noqa
+
 
 @attr.s
 class Run:
@@ -38,9 +39,9 @@ class Source(BaseModel):
     params = attr.ib(attr.Factory(dict))
     src_template = attr.ib('{}')
     retries = attr.ib(10)
-    json_key = attr.ib(None, convert=astuple)
+    json_key = attr.ib(None, convert=str_as_tuple)
     duplicate = attr.ib(False)
-    copy_attrs = attr.ib(None, convert=astuple)
+    copy_attrs = attr.ib(None, convert=str_as_tuple)
     attr_condition = attr.ib('')
     parent = attr.ib(False)
 
@@ -59,19 +60,29 @@ class Attr(BaseModel):
     The value for the attribute is obtained by applying the func
     on the element obtained through the selector.
     '''
-    selector = attr.ib(default=None, convert=astuple)
+    selector = attr.ib(default=None, convert=str_as_tuple)
     name = attr.ib(default=None)
-    value = attr.ib(default=None)
-    func = attr.ib(default=tuple, convert=astuple,
+    value = attr.ib(default=None, convert=str_as_tuple)
+    func = attr.ib(default=tuple, convert=str_as_tuple,
                    metadata={Run.parser: 1})
     attr_condition = attr.ib(default={})
     source_condition = attr.ib(default={})
     source = attr.ib(default=None, convert=source_conv,
                      metadata={'Source': 1})
-    kws = attr.ib(default=attr.Factory(dict), convert=astuple)
+    kws = attr.ib(default=attr.Factory(dict))
     type = attr.ib(default=None)
     value_template = attr.ib(default=None)
 
+    def __attrs_post_init__(self):
+        # Ensure that the kws are encapsulated in a list with the same length
+        # as the funcs.
+        if type(self.kws) not in [list, tuple]:
+            self.kws = (self.kws,)
+
+        difference = len(self.func) - len(self.kws)
+        if difference:
+            for _ in range(difference):
+                self.kws.append({})
 
 @attr.s
 class Template(BaseModel):
@@ -81,12 +92,12 @@ class Template(BaseModel):
     js_regex = attr.ib(default=None)
     objects = attr.ib(init=False)
     source = attr.ib(default=None, convert=source_conv)
-    func = attr.ib(default='update', metadata={StoreWorker: 1})
+    func = attr.ib(default='create', metadata={StoreWorker: 1})
     kws = attr.ib(default=attr.Factory(dict))
     name = attr.ib(default='')
     partial = attr.ib(default=False)
     required = attr.ib(default=False)
-    selector = attr.ib(default=None, convert=astuple)
+    selector = attr.ib(default=None, convert=str_as_tuple)
     args = attr.ib(default=tuple)
     attrs = attr.ib(default=attr.Factory(dict), convert=attr_dict)
     url = attr.ib(default='')
