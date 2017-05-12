@@ -40,7 +40,7 @@ class StoreWorker(Process):
         '''
         assert getattr(self, '_create', None), \
             unsupported.format("create", self.__name__)
-        return self._write(*args, **kwargs)
+        return self._create(objects, *args, **kwargs)
 
     def read(self, *args, **kwargs):
         '''
