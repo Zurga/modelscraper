@@ -4,6 +4,7 @@ from multiprocessing import Process, JoinableQueue
 from queue import Empty
 from functools import reduce
 from datetime import datetime
+from types import FunctionType
 
 import lxml.html as lxhtml
 from lxml.etree import XPath
@@ -74,6 +75,16 @@ class BaseParser:
                 attr.selector = self._get_selector(attr)
 
     def _get_funcs(self, func_names):
+        functions = []
+        try:
+            for f in func_names:
+                if type(f) != str:
+                    functions.append(f)
+                else:
+                    functions.append(getattr(self, f))
+            return functions
+        except:
+            print(f)
         return tuple(getattr(self, f) for f in func_names)
 
     def _gen_objects(self, template, extracted, source):
@@ -85,7 +96,8 @@ class BaseParser:
         '''
         for data in extracted:
             # Create a new objct from the template.
-            objct = template._replicate(name=template.name, url=source.url)
+            objct = template._replicate(name=template.name, url=source.url,
+                                        func=template.func)
 
             # Set predefined attributes from the source.
             for attr in source.attrs.values():
@@ -105,6 +117,7 @@ class BaseParser:
             if no_value == len(objct.attrs) - len(source.attrs):
                 print('Template {} has failed, attempting to use the fallback'.\
                       format(template.name))
+                print(source.url)
                 if getattr(self, '_fallback', None) and False:
                     for objct in self._fallback(template, extracted, source):
                         yield objct
@@ -219,12 +232,16 @@ class HTMLParser(BaseParser):
     def _get_selector(self, model):
         # assert len(model.selector) == 1, "Only one selector can be used."
         if model.selector:
-            try:
-                return CSSSelector(model.selector[0])
-            except SelectorSyntaxError:
-                return XPath(model.selector[0])
-            except:
-                raise Exception('Not a valid css or xpath selector', selector)
+            if type(model.selector) in (CSSSelector, XPath):
+                return model.selector
+            else:
+                try:
+                    return CSSSelector(model.selector[0])
+                except SelectorSyntaxError:
+                    return XPath(model.selector[0])
+                except:
+                    raise Exception('Not a valid css or xpath selector',
+                                    model.selector)
         return None
 
     def _apply_selector(self, selector, data):
@@ -524,4 +541,26 @@ class JSONParser(BaseParser):
             print('sel_text', elements, e)
 
     def sel_dict(self, elements):
+        return elements
+
+
+class TextParser(BaseParser):
+    def __init__(self, **kwargs):
+        super(TextParser, self).__init__(**kwargs)
+        for key, value in kwargs.items():
+            setattr(self, key, value)
+
+    def _prepare_data(self, source):
+        return source.data
+
+    def _extract(self, data, template):
+        return str_as_tuple(data)
+
+    def _apply_selector(self, selector, data):
+        return data
+
+    def _get_selector(self, model):
+        return str_as_tuple(model.selector)
+
+    def sel_text(self, elements):
         return elements
