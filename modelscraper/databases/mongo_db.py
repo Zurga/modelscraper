@@ -12,8 +12,8 @@ class MongoDB(StoreWorker):
     '''
     name = 'mongo_db'
 
-    def __init__(self, in_q=None):
-        super(MongoDB, self).__init__(in_q=in_q)
+    def __init__(self, store_q=None):
+        super(MongoDB, self).__init__(store_q=store_q)
         # TODO add connection details
         self.client = MongoClient(connect=False)
 
@@ -37,7 +37,7 @@ class MongoDB(StoreWorker):
                                      *args, **kwargs)
 
     def _update(self, objects, key='', method='$set', upsert=True,
-                date=False, **kwargs):
+                date=False):
         # TODO link from the StoreWorker documentation
         # TODO add pymongo documentation link.
         if objects:
@@ -51,20 +51,22 @@ class MongoDB(StoreWorker):
             db_requests = [UpdateMany(query, {method: obj.to_dict()},
                                       upsert=upsert) for obj, query in
                            zip(objects, queries)]
-
-            return self.coll.bulk_write(db_requests, **kwargs)
+            return self.coll.bulk_write(db_requests)
         return False
 
-    def _read(self, uri, objct, **kwargs):
-        db_object = self.coll.find_one({'url': uri}, **kwargs)
-        if db_object:
-            new_objct = objct.__class__()
-            new_objct.attrs = objct.attrs_from_dict(db_object)
-            return new_objct
-        return False
+    def _read(self, template=None, url='', **kwargs):
+        self.db = self.client[template.db]
+        self.coll = self.db[template.table]
+        if url:
+            db_objects = self.coll.find({'url': url}, **kwargs)
+        else:
+            db_objects = self.coll.find(**kwargs)
+
+        for db_object in db_objects:
+            yield template().attrs_from_dict(db_object)
 
     def _create_queries(self, key, objects):
         if not key:
             return ({'url': obj.url} for obj in objects)
         else:
-            return ({key: obj.attrs[key].value} for obj in objects)
+            return ({key: obj.attrs[key].value[0]} for obj in objects)
