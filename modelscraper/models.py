@@ -26,6 +26,7 @@ class Run:
     source_worker = attr.ib(default=WebSource)
     n_workers = attr.ib(default=1)
     active = attr.ib(default=True)
+    synchronize = attr.ib(default=False)
 
 @attr.s
 class Source(BaseModel):
@@ -44,6 +45,7 @@ class Source(BaseModel):
     copy_attrs = attr.ib(None, convert=str_as_tuple)
     attr_condition = attr.ib('')
     parent = attr.ib(False)
+    from_db = attr.ib(None, metadata={'Template': 1})
 
 
 def source_conv(source):
@@ -111,6 +113,9 @@ class Template(BaseModel):
             raise Exception(self.name +
                 'Database name and table are set, but not the database type')
 
+        if self.url:
+            self.attrs['url'] = Attr(name='url', value=self.url)
+
     def to_dict(self):
         return {'url': self.url, **self.attrs_to_dict()} # noqa
 
@@ -118,7 +123,7 @@ class Template(BaseModel):
         return {attr.name: attr.value for attr in self.attrs.values()}
 
     def to_store(self):
-        replica = self.__class__(db=self.db, table=self.table,
+        replica = self.__class__(db=self.db, table=self.table, func=self.func,
                                  db_type=self.db_type, kws=self.kws,
                                  name=self.name, url=self.url)
         replica.objects = self.objects[:]
