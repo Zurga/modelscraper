@@ -1,8 +1,8 @@
 from . import workers
 from multiprocessing import Queue
-from . import databases
 from collections import defaultdict
 import sys
+import cProfile
 
 
 class Dispatcher:
@@ -42,21 +42,8 @@ class Dispatcher:
         db_threads = defaultdict(list)
 
         for model in models:
-            for run in model.runs:
-                for template in run.templates:
-                    if template.db_type:
-                        db_threads[template.db_type].append(template)
-
-                    self._check_functions(template, run)
-
-        for model in models:
-            scraper = workers.ScrapeWorker(model, store_q=self.store_q)
+            scraper = workers.ScrapeWorker(model)
             self.scrapers[scraper.name] = scraper
-
-        for thread, templates in db_threads.items():
-            print('starting', thread)
-            store_thread = databases._threads[thread](in_q=self.store_q)
-            store_thread.start()
 
     def _check_functions(self, template, run):
         error_string = "One of these functions: {} is not implemented in {}."
