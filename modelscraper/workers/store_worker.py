@@ -1,19 +1,18 @@
 from multiprocessing import Process
-from threading import Thread
 
 
 unsupported = 'The "{}" function is not supported by the {} adapter'
 
 
 class StoreWorker(Process):
-    def __init__(self, in_q=None, cache=10):
+    def __init__(self, store_q=None, cache=10):
         super(StoreWorker, self).__init__()
-        self.in_q = in_q
+        self.store_q = store_q
         self.cache = cache
 
     def run(self):
         while True:
-            template = self.in_q.get()
+            template = self.store_q.get()
 
             if template is None:
                 break
