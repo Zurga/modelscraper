@@ -1,26 +1,22 @@
+from collections import defaultdict
 from multiprocessing import Process, JoinableQueue
 from queue import Queue, Empty
+from .. import databases
 import os
 
 from pybloom import ScalableBloomFilter
 
 
 class ScrapeWorker(Process):
-    def __init__(self, model, store_q=JoinableQueue()):
+    def __init__(self, model):
         super(ScrapeWorker, self).__init__()
-        '''
-        self.name = name
-        self.domain = domain
-        self.runs = runs
-        self.time_out = time_out
-        self.num_getters = num_getters
-        self.session = session
-        self.daemon = daemon
-        '''
+
+        for run in model.runs:
+            for template in run.templates:
+                self.check_functions(template, run)
 
         self.source_q = Queue()
         self.parse_q = JoinableQueue()
-        self.store_q = store_q
         self.seen = ScalableBloomFilter()
         self.forwarded = ScalableBloomFilter()
         self.new_sources = []
@@ -29,15 +25,36 @@ class ScrapeWorker(Process):
         self.parser = None
         self.done_parsing = False
         self.no_more_sources = False
+        self.dbs = dict()
 
         for attr in model.__dict__.keys():
             setattr(self, attr, getattr(model, attr))
+
+        db_threads = defaultdict(list)
+
+        for run in model.runs:
+            for template in run.templates:
+                if template.db_type:
+                    db_threads[template.db_type].append(template)
+                self.check_functions(template, run)
+
+        for thread, templates in db_threads.items():
+            queue = JoinableQueue()
+            print(databases._threads[thread])
+            store_thread = databases._threads[thread](store_q=queue)
+
+            for template in templates:
+                self.dbs[template.name] = store_thread
+            store_thread.start()
 
     def run(self):
         # create the threads needed to scrape
         i = 0
         while self.runs:
-            run = self.runs.pop(0)
+            if i < len(self.runs):
+                run = self.runs[i]
+            else:
+                break
             print('running run:', i)
             i += 1
 
@@ -47,9 +64,9 @@ class ScrapeWorker(Process):
             self.parsed = 0
 
             if run.active:
-                self.spawn_parser(run)
                 self.spawn_workforce(run)
                 self.add_sources(run)
+                self.to_forward = []
                 self.parse_sources()
 
             if run.repeat:
@@ -70,26 +87,28 @@ class ScrapeWorker(Process):
                     break
                 else:
                     print('Waiting for sources to parse')
-            self.seen.add(source.url)
-            objects = self.parser.parse(source)
-            self.parsed += 1
+                    source = None
 
-            for obj in objects:
-                if obj.db:
-                    self.store_q.put(obj)
+            if source is not None:
+                self.seen.add(source.url)
+                objects = self.parser.parse(source)
+                self.parsed += 1
 
-            for new_source in self.new_sources:
-                self._gen_source(*new_source)
+                for obj in objects:
+                    if obj.db:
+                        self.dbs[obj.name].store_q.put(obj)
 
-            self.new_sources = []
-            self.show_progress()
+                for new_source in self.new_sources:
+                    self._gen_source(*new_source)
 
-        # self.parser.join()
+                self.new_sources = []
+                self.show_progress()
+
         print('parser_joined')
         print('Unparsed ', self.source_q.qsize())
-        # print('forwarded', len(self.parser.forwarded))
 
-    def spawn_parser(self, run):
+    def spawn_workforce(self, run):
+        # check if run reuses the current source workforce
         if run.parser:
             self.parser = run.parser(parent=self, templates=run.templates)
         elif not self.parser and not run.parser:
@@ -98,12 +117,11 @@ class ScrapeWorker(Process):
             parse_class = self.parser.__class__
             self.parser = parse_class(parent=self, templates=run.templates)
 
-    def spawn_workforce(self, run):
-        # check if run reuses the current source workforce
         if run.n_workers:
             n_workers = run.n_workers
         else:
             n_workers = self.num_getters
+
         if not self.workers:
             for i in range(n_workers):
                 worker = run.source_worker(parent=self, id=i,
@@ -113,16 +131,29 @@ class ScrapeWorker(Process):
                 self.workers.append(worker)
 
     def add_sources(self, run):
-        for source in self.to_forward:
-            self.source_q.put(source)
-            self.to_parse += 1
+        urls_in_db = []
+        if run.synchronize:
+            urls_in_db = self.get_scraped_urls(run)
 
-        self.to_forward = []
+        for source in self.to_forward:
+            if source.url not in urls_in_db:
+                self.source_q.put(source)
+                self.to_parse += 1
 
         for source in run.sources:
+            if source.from_db:
+                sources = self.dbs[source.from_db].read(source.from_db)
             if source.active:
                 self.source_q.put(source)
                 self.to_parse += 1
+
+    def get_scraped_urls(self, run):
+        urls = []
+        for template in run.templates:
+            if template.name in self.dbs:
+                urls.extend([o['url'] for o in
+                             self.dbs[template.name].read(template) if o])
+        return urls
 
     def _gen_source(self, objct, attr):
         for value in attr.value:
@@ -208,8 +239,26 @@ class ScrapeWorker(Process):
         Sources to get:   {}
         Sources to parse: {}
         Sources parsed:   {}
+        Average get time: {}
         '''
+        average = sum(w.mean for w in self.workers) / len(self.workers)
         print(info.format(self.name,
                           self.source_q.qsize(),
                           self.to_parse,
-                          self.parsed))
+                          self.parsed,
+                          round(average, 3)
+                          ))
+
+    def check_functions(self, template, run):
+        error_string = "One of these functions: {} is not implemented in {}."
+        not_implemented = []
+
+        for attr in template.attrs.values():
+            for func in attr.func:
+                if not getattr(run.parser, func, False):
+                    not_implemented.append(func)
+
+        if not_implemented:
+            raise Exception(error_string.format(str(not_implemented),
+                                                run.parser.__class__.__name__))
+
