@@ -24,7 +24,8 @@ class WebSource(Thread):
             self.time_out = time_out
             self.times = []
             self.visited = 0
-            self.last_mean = 0
+            self.mean = 0
+            self.total_time = 0
             self.to_parse = parent.to_parse
 
         else:
@@ -52,8 +53,9 @@ class WebSource(Thread):
                             params=source.params,
                             headers={**headers, # noqa
                                      **source.headers})
-                # self.visited += 1
-                # self.times.append(page.elapsed.total_seconds())
+                self.visited += 1
+                self.total_time += page.elapsed.total_seconds()
+                self.mean = self.total_time / self.visited
                 # TODO fix means calculation for automatic worker scaling.
                 '''
                 if self.visited % 50 == 0:
