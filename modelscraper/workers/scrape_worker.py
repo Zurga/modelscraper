@@ -1,19 +1,18 @@
 from collections import defaultdict
 from multiprocessing import Process, JoinableQueue
 from queue import Queue, Empty
-from .. import databases
+from concurrent.futures import ThreadPoolExecutor
 import os
+import time
 
-from pybloom import ScalableBloomFilter
+from pybloom import ScalableBloomFilter, BloomFilter
+
+from .. import databases
 
 
 class ScrapeWorker(Process):
     def __init__(self, model):
         super(ScrapeWorker, self).__init__()
-
-        for run in model.runs:
-            for template in run.templates:
-                self.check_functions(template, run)
 
         self.source_q = Queue()
         self.parse_q = JoinableQueue()
@@ -26,6 +25,8 @@ class ScrapeWorker(Process):
         self.done_parsing = False
         self.no_more_sources = False
         self.dbs = dict()
+        self.schedule = model.schedule
+        self.model = model
 
         for attr in model.__dict__.keys():
             setattr(self, attr, getattr(model, attr))
@@ -40,7 +41,6 @@ class ScrapeWorker(Process):
 
         for thread, templates in db_threads.items():
             queue = JoinableQueue()
-            print(databases._threads[thread])
             store_thread = databases._threads[thread](store_q=queue)
 
             for template in templates:
@@ -51,6 +51,7 @@ class ScrapeWorker(Process):
         # create the threads needed to scrape
         i = 0
         while self.runs:
+            # if self.is_scheduled():
             if i < len(self.runs):
                 run = self.runs[i]
             else:
@@ -71,9 +72,10 @@ class ScrapeWorker(Process):
 
             if run.repeat:
                 self.runs.append(run)
-                print('Repeating run', i-1)
-
-            print('run', i-1, 'stopped')
+                print('Repeating run:', run.name)
+            # else:
+            #time.sleep(self.get_sleep_time())
+        print('Run:', i, 'stopped')
 
     def parse_sources(self):
         while True:
@@ -85,6 +87,8 @@ class ScrapeWorker(Process):
                 if self.source_q.empty():
                     print('No more sources to parse at this point')
                     break
+                # elif self.paused:
+                #     time.sleep(self.get_sleep_time())
                 else:
                     print('Waiting for sources to parse')
                     source = None
@@ -120,7 +124,7 @@ class ScrapeWorker(Process):
         if run.n_workers:
             n_workers = run.n_workers
         else:
-            n_workers = self.num_getters
+            n_workers = self.model.num_getters
 
         if not self.workers:
             for i in range(n_workers):
@@ -133,7 +137,7 @@ class ScrapeWorker(Process):
     def add_sources(self, run):
         urls_in_db = []
         if run.synchronize:
-            urls_in_db = self.get_scraped_urls(run)
+            urls_in_db = [url for url in self.get_scraped_urls(run)]
 
         for source in self.to_forward:
             if source.url not in urls_in_db:
@@ -148,21 +152,16 @@ class ScrapeWorker(Process):
                 self.to_parse += 1
 
     def get_scraped_urls(self, run):
-        urls = []
         for template in run.templates:
             if template.name in self.dbs:
-                urls.extend([o['url'] for o in
-                             self.dbs[template.name].read(template) if o])
-        return urls
+                for objct in self.dbs[template.name].read(template):
+                    if objct:
+                        yield objct['url'].value
 
     def _gen_source(self, objct, attr):
         for value in attr.value:
             # for now only "or" is supported.
-            if attr.source_condition and \
-                    not any(
-                        self._evaluate_condition(objct,
-                                                 attr.source_condition)
-                    ):
+            if not self._evaluate_condition(objct, attr):
                 continue
 
             url = self._apply_src_template(attr.source, value)
@@ -211,18 +210,18 @@ class ScrapeWorker(Process):
             return source.src_template.format(url)
         return url
 
-    def _evaluate_condition(self, objct, condition, **kwargs):
+    def _evaluate_condition(self, objct, attr, **kwargs):
         # TODO add "in", and other possibilities.
-        for name, cond in condition.items():
-            values = objct.attrs[name].value
-            # Wrap the value in a list without for example seperating the
-            # characters.
-            values = [values] if type(values) != list else values
-            for val in values:
-                if val and eval(str(val) + cond, {}, {}):
-                    yield True
-                else:
-                    yield False
+        if attr.source_condition:
+            for name, cond in attr.source_condition.items():
+                values = objct.attrs[name].value
+                # Wrap the value in a list without for example seperating the
+                # characters.
+                values = [values] if type(values) != list else values
+                for val in values:
+                    if val and not eval(str(val) + cond, {}, {}):
+                        return False
+        return True
 
     def reset_source_queue(self):
         while not self.source_q.empty():
@@ -233,20 +232,22 @@ class ScrapeWorker(Process):
             self.source_q.task_done()
 
     def show_progress(self):
-        # os.system('clear')
+        os.system('clear')
         info = '''
-        Domain            {}
-        Sources to get:   {}
-        Sources to parse: {}
-        Sources parsed:   {}
-        Average get time: {}
+        Domain              {}
+        Sources to get:     {}
+        Sources to parse:   {}
+        Sources parsed:     {}
+        Average get time:   {}s
+        Average parse time: {}s
         '''
-        average = sum(w.mean for w in self.workers) / len(self.workers)
+        get_average = sum(w.mean for w in self.workers) / len(self.workers)
         print(info.format(self.name,
                           self.source_q.qsize(),
                           self.to_parse,
                           self.parsed,
-                          round(average, 3)
+                          round(get_average, 3),
+                          round(self.parser.total_time / self.parsed, 3)
                           ))
 
     def check_functions(self, template, run):
@@ -261,4 +262,3 @@ class ScrapeWorker(Process):
         if not_implemented:
             raise Exception(error_string.format(str(not_implemented),
                                                 run.parser.__class__.__name__))
-
