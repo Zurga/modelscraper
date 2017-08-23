@@ -5,6 +5,7 @@ from queue import Empty
 from functools import reduce
 from datetime import datetime
 from types import FunctionType
+import time
 
 import lxml.html as lxhtml
 from lxml.etree import XPath
@@ -34,6 +35,7 @@ class BaseParser:
         # Set all selectors and the functions of the attrs to the correct
         # functions and selectors of the parser.
         self.templates = self._prepare_templates(templates)
+        self.total_time = 0
 
         for key, value in kwargs.items():
             setattr(self, key, value)
@@ -51,6 +53,7 @@ class BaseParser:
         raise NotImplementedError
 
     def parse(self, source):
+        start = time.time()
         data = self._prepare_data(source)
 
         for template in self.templates:
@@ -66,6 +69,7 @@ class BaseParser:
                 self.parent.reset_source_queue()
 
             yield template.to_store()
+        self.total_time += time.time() - start
 
     def _prepare_templates(self, templates):
         for template in templates:
@@ -327,9 +331,29 @@ class HTMLParser(BaseParser):
                 elements.append(elem)
         return elements
 
-    def sel_text(self, elements, replacers=None, substitute='', regex: str='',  # noqa
-                numbers: bool=False, index=None, needle=None, all_text=True,
-                split='', as_list=False, debug=False):  # noqa
+    def modify_text(self, text, replacers=None, substitute='', regex: str='',
+                numbers: bool=False, needle=None):
+        if replacers:
+            replacers = str_as_tuple(replacers)
+            regex = re.compile('|'.join(replacers))
+            text = [regex.sub(substitute, t) for t in text]
+
+        if regex:
+            regex = re.compile(regex)
+            text = [f for t in text for f in regex.findall(t)]
+
+        if needle:
+            if not all([re.match(needle, t) in t for t in text]):
+                return None
+
+        if numbers:
+            text = [int(''.join([c for c in t if c.isdigit() and c]))
+                    for t in text if t and any(map(str.isdigit, t))]
+        return text
+
+    def sel_text(self, elements, all_text=True, debug=False, replacers=None,
+                 substitute='', regex: str='', numbers: bool=False, index=None,
+                 needle=None):  # noqa
         '''
         Select all text for a given selector.
         '''
@@ -340,26 +364,12 @@ class HTMLParser(BaseParser):
                 text = [el.text for el in elements]
 
             text = [t.lstrip().rstrip() for t in text if t]
-
-            if replacers:
-                regex = re.compile('|'.join(replacers))
-                text = [regex.sub(substitute, t) for t in text]
-
-            if regex:
-                regex = re.compile(regex)
-                text = [f for t in text for f in regex.findall(t)]
-
-            if needle:
-                if not all([re.match(needle, t) in t for t in text]):
-                    return None
-
-            if numbers:
-                text = [int(''.join([c for c in t if c.isdigit() and c]))
-                        for t in text if t and any(map(str.isdigit, t))]
-
+            text = self.modify_text(text, replacers=replacers,
+                                    substitute=substitute, regex=regex,
+                                    numbers=numbers, needle=needle)
             if text:
                 if debug:
-                    print(text)
+                    print(elements, text)
                 return self._value(text, index)
         except Exception as e:
             print(elements, e)
@@ -398,7 +408,8 @@ class HTMLParser(BaseParser):
         return self._value(selected, index)
 
     def sel_attr(self, elements, attr: str='', index: int=None,
-                 regex=None):
+                replacers=None, substitute='', regex: str='',
+                 numbers: bool=False, needle=None):
         '''
         Extract an attribute of an HTML element. Will return
         a list of attributes if multiple tags match the
@@ -408,6 +419,10 @@ class HTMLParser(BaseParser):
         attrs = [el.attrib.get(attr) for el in elements]
         if regex:
             attrs = [f for a in attrs for f in re.findall(regex, a)]
+            attrs = self.modify_text(attrs, replacers=replacers,
+                                     substitute=substitute,
+                                     regex=regex, numbers=numbers,
+                                     needle=needle)
 
         return self._value(attrs, index)
 
