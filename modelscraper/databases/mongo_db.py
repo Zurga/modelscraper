@@ -63,7 +63,9 @@ class MongoDB(StoreWorker):
             db_objects = self.coll.find(**kwargs)
 
         for db_object in db_objects:
-            yield template().attrs_from_dict(db_object)
+            objct = template()
+            objct.attrs_from_dict(db_object)
+            yield objct
 
     def _create_queries(self, key, objects):
         if not key:
