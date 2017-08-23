@@ -11,22 +11,23 @@ class WebSource(Thread):
     It will place all items in its queue into the out_q specified.
     For use without parent Thread supply keyword arguments: name, domain, in_q,
     '''
-    def __init__(self, parent=None, id=0, out_q=Queue(), time_out=0.3, retries=10, **kwargs):
+    def __init__(self, parent=None, id=0, out_q=Queue(), time_out=0.3,
+                 retries=10, **kwargs):
         super(WebSource, self).__init__()
         if parent or kwargs and out_q:
-            self.name = parent.name + str(id) + 'WebSource'
-            self.domain = parent.domain
+            self.name = parent.model.name + str(id) + 'WebSource'
+            self.domain = parent.model.domain
             self.in_q = parent.source_q
             self.out_q = parent.parse_q
             self.retries = retries
-            self.session = parent.session
+            self.session = parent.model.session
+            self.to_parse = parent.to_parse
             self.user_agent = parent.user_agent
             self.time_out = time_out
             self.times = []
             self.visited = 0
             self.mean = 0
             self.total_time = 0
-            self.to_parse = parent.to_parse
 
         else:
             raise Exception('Not enough specified, read the docstring.')
@@ -56,14 +57,6 @@ class WebSource(Thread):
                 self.visited += 1
                 self.total_time += page.elapsed.total_seconds()
                 self.mean = self.total_time / self.visited
-                # TODO fix means calculation for automatic worker scaling.
-                '''
-                if self.visited % 50 == 0:
-                    self.last_mean = mean(times)
-                    self.times = []
-                    new_mean = mean(times)
-                    if abs(new_mean - self.last_mean) > 0.10:
-                '''
                 # print(id(self), '{}'.format(source.url), page, source.method, source.data)
 
                 if page and source.parse:
