@@ -6,6 +6,7 @@ from .workers.http_worker import WebSource
 from .parsers import HTMLParser
 from .workers.store_worker import StoreWorker
 from .helpers import selector_converter, attr_dict, str_as_tuple
+from . import databases
 
 
 @attr.s
@@ -140,8 +141,9 @@ class Template(BaseModel):
 
 
 class ScrapeModel:
-    def __init__(self, name='', domain='', runs: Run=[], num_getters=1, time_out=1, user_agent=None,
-                 session=requests.Session(), awaiting=False, cookies={}, db=[], **kwargs):
+    def __init__(self, name='', domain='', runs: Run=[], num_getters=1,
+                 time_out=1, user_agent=None, session=requests.Session(),
+                 awaiting=False, cookies={}, db=[], schedule='', **kwargs):
         self.name = name
         self.domain = domain
         self.runs = runs
@@ -151,6 +153,7 @@ class ScrapeModel:
         self.awaiting = awaiting
         self.user_agent = user_agent
         self.db = db
+        self.schedule = schedule
 
         if cookies:
             print(cookies)
@@ -158,3 +161,14 @@ class ScrapeModel:
 
         for key, value in kwargs.items():
             setattr(self, key, value)
+
+    def __getitem__(self, key):
+        for run in self.runs:
+            for template in run.templates:
+                if template.name == key:
+                    return template
+
+    def read_template(self, template_name='', as_object=False):
+        template = self[template_name]
+        database = databases._threads[template.db_type]()
+        return database.read(template=template)
