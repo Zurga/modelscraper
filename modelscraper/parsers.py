@@ -153,6 +153,7 @@ class BaseParser:
                             selector=None, source=attr.source)
 
             # Create a request from the attribute if desirable
+            # TODO add the source to the attr straightaway.
             if attr.source and parsed:
                 self.parent.new_sources.append((objct, new_attr))
 
@@ -179,6 +180,7 @@ class BaseParser:
                 continue
             self.source_q.task_done()
 
+    # TODO check if this belongs here...
     def _copy_attrs(self, objct, source):
         # Copy only the attribute with the key
         if type(source.copy_attrs) == str:
