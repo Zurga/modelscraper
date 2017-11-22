@@ -20,14 +20,15 @@ class BaseModel(object):
 
 @attr.s
 class Run:
-    sources = attr.ib(default=attr.Factory(list))
-    templates = attr.ib(default=attr.Factory(list))
-    repeat = attr.ib(default=False)
-    parser = attr.ib(default=HTMLParser)
-    source_worker = attr.ib(default=WebSource)
-    n_workers = attr.ib(default=1)
     active = attr.ib(default=True)
+    name = attr.ib(default='')
+    n_workers = attr.ib(default=1)
+    parser = attr.ib(default=HTMLParser)
+    repeat = attr.ib(default=False)
+    sources = attr.ib(default=attr.Factory(list))
+    source_worker = attr.ib(default=WebSource)
     synchronize = attr.ib(default=False)
+    templates = attr.ib(default=attr.Factory(list))
 
 @attr.s
 class Source(BaseModel):
@@ -139,7 +140,6 @@ class Template(BaseModel):
         attr = Attr(name=name, value=value, **kwargs)
         self.attrs[attr.name] = attr
 
-
 class ScrapeModel:
     def __init__(self, name='', domain='', runs: Run=[], num_getters=1,
                  time_out=1, user_agent=None, session=requests.Session(),
@@ -162,13 +162,13 @@ class ScrapeModel:
         for key, value in kwargs.items():
             setattr(self, key, value)
 
-    def __getitem__(self, key):
+    def get_template(self, key):
         for run in self.runs:
             for template in run.templates:
                 if template.name == key:
                     return template
 
     def read_template(self, template_name='', as_object=False):
-        template = self[template_name]
+        template = self.get_template(template_name)
         database = databases._threads[template.db_type]()
         return database.read(template=template)
