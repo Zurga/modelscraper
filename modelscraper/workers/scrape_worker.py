@@ -56,7 +56,7 @@ class ScrapeWorker(Process):
                 run = self.runs[i]
             else:
                 break
-            print('running run:', i)
+            print('running run:', i, run.name)
             i += 1
 
             # Check if the run has a parser, if not, reuse the one from the
