@@ -1,5 +1,5 @@
 from dispatcher import Dispatcher
-from models import ScrapeModel, Run, Template, Attr, Source
+from components import ScrapeModel, Phase, Template, Attr, Source
 from pymongo import MongoClient
 from workers import WebSource
 from parsers import HTMLParser
@@ -10,8 +10,8 @@ db = cl.thuisbezorgd
 col = db.reviews
 
 thuisbezorgd = ScrapeModel(name='thuisbezorgd', domain='http://thuisbezorgd.nl',
-                                  num_getters=2, runs=[
-    Run(source_worker=WebSource, parser=HTMLParser, sources=[
+                                  num_getters=2, phases=[
+    Phase(source_worker=WebSource, parser=HTMLParser, sources=[
         Source(url="https://www.thuisbezorgd.nl/")],
         templates=(
             Template(
@@ -34,7 +34,7 @@ thuisbezorgd = ScrapeModel(name='thuisbezorgd', domain='http://thuisbezorgd.nl',
             ),
         )
     ),
-    Run(source_worker=WebSource, parser=HTMLParser,
+    Phase(source_worker=WebSource, parser=HTMLParser,
         templates=(
             Template(
                 name='reviews', selector='',

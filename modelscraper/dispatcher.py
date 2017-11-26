@@ -60,9 +60,9 @@ class Dispatcher:
 
     def print_progress(progress):
         sys.stdout.write('\033[2J\033[H')  # clears the screen
-        for scraper, percent, run in progress:
+        for scraper, percent, phase in progress:
             bar = ('=' * int(percent * 20)).ljust(20)
             percent = int(percent * 100)
-            sys.stdout.write("%s %s [%s] %s%%\n" % (scraper, run,
+            sys.stdout.write("%s %s [%s] %s%%\n" % (scraper, phase,
                                                     bar, percent))
             sys.stdout.flush()

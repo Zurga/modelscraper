@@ -16,6 +16,6 @@ info = [{'first_name': 'Tim',
          'email': 'tdegraaff@mailinator.com'
          }]
 
-hartstichting = models.ScrapeModel(name='Hartstichting', domain='hartstichting.nl',
-    runs=[
-        models.Run(getters=
+hartstichting = ScrapeModel(name='Hartstichting', domain='hartstichting.nl',
+    phases=[
+        Phase(getters=

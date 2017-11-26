@@ -1,12 +1,12 @@
 from modelscraper.dispatcher import Dispatcher
-from modelscraper.models import ScrapeModel, Run, Template, Attr, Source
+from modelscraper.components import ScrapeModel, Phase, Template, Attr, Source
 from modelscraper.workers import WebSource
 from modelscraper.parsers import HTMLParser
 
 
 uefa = ScrapeModel(
-    name='eufa', domain='http://uefa.com', num_getters=2, runs=[
-    Run(sources=(
+    name='eufa', domain='http://uefa.com', num_getters=2, phases=[
+    Phase(sources=(
         Source(url="http://www.uefa.com/uefaeuro/season=2016/teams/index.html"),),
         templates=[
             Template(
@@ -17,7 +17,7 @@ uefa = ScrapeModel(
                 ]
             )]
     ),
-    Run(templates=[
+    Phase(templates=[
             Template(
                 name='player', selector='.squad--team-player',
                 db_type='mongo_db', db='uefa', table='players',

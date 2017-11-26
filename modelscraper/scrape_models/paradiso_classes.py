@@ -2,15 +2,15 @@ from dispatcher import Dispatcher
 from workers import WebSource
 from parsers import HTMLParser
 import string
-from models import ScrapeModel, Source, Run, Attr, Template
+from components import ScrapeModel, Source, Phase, Attr, Template
 
-paradiso = ScrapeModel(name='paradiso', domain='https://paradiso.nl', runs=[
-    Run(source_worker=WebSource, sources=[Source(url='https://paradiso.nl/web/Agenda.htm')], parser=HTMLParser,
+paradiso = ScrapeModel(name='paradiso', domain='https://paradiso.nl', phases=[
+    Phase(source_worker=WebSource, sources=[Source(url='https://paradiso.nl/web/Agenda.htm')], parser=HTMLParser,
         templates=[Template(name='event_link', selector='a.event-link', attrs=[
             Attr(name='url', func='sel_attr', kws={'attr': 'href'}, source={'active': False})
             ])
         ]),
-    Run(templates=[
+    Phase(templates=[
         Template(name='event', db_type='mongo_db', db='paradiso', table='events',
                 attrs=[
                     Attr(name='name', selector='meta[name=evenementts]',

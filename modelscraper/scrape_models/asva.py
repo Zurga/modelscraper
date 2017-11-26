@@ -10,7 +10,7 @@ import sys
 clss = [
     {'name': 'asva',
      'domain': 'http://asva.nl/',
-     'runs': [
+     'phases': [
          {'starts': [
              {'url': 'http://asva.nl/',
               'active': 1,

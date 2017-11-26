@@ -22,18 +22,18 @@ with open('pros.json') as pros:
     df = df[ df.prices < 300]
     df = df[ df.prices > 40]
 data = 'lsd=AVqcfDvD&charset_test=%E2%82%AC%2C%C2%B4%2C%E2%82%AC%2C%C2%B4%2C%E6%B0%B4%2C%D0%94%2C%D0%84&version=1&ajax=0&width=0&pxr=0&gps=0&dimensions=0&m_ts=1461427436&li=7JwbV4q78ADNzenw4vlokKwh&email=jim.lemmers%40gmail.com&pass=thisclassicpursetoldfacebook&login=Aanmelden'
-model = models.ScrapeModel(name='pros', domain='https://m.facebook.com', num_getters=1, runs=[
-    models.Run(getters=[models.Getter(url='https://m.facebook.com/login.php?refsrc=https%3A%2F%2Fm.facebook.com%2Fhome.php&lwv=100&refid=8',
+model = ScrapeModel(name='pros', domain='https://m.facebook.com', num_getters=1, phases=[
+    Phase(getters=[models.Getter(url='https://m.facebook.com/login.php?refsrc=https%3A%2F%2Fm.facebook.com%2Fhome.php&lwv=100&refid=8',
                                       data=data, method='post', parse=False)]),
-    models.Run(getters=(models.Getter(url='https://m.facebook.com/search/people/?q={}'.format(i)) for i
+    Phase(getters=(models.Getter(url='https://m.facebook.com/search/people/?q={}'.format(i)) for i
                         in df.phone),
             templates=[
-                models.Template(
+                Template(
                     name='person', selector='.bl',
                     attrs=[
-                        models.Attr(name='website', selector='a', func=sel_attr,
+                        Attr(name='website', selector='a', func=sel_attr,
                                     kws={'attr': 'href'}),
-                    ], store=models.StoreObject(func=store_mongo, kws={'db': 'prossies', 'collection': 'fb'})
+                    ], store=StoreObject(func=store_mongo, kws={'db': 'prossies', 'collection': 'fb'})
                 ),
             ]
             )

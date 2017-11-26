@@ -1,5 +1,5 @@
 from dispatcher import Dispatcher
-from models import ScrapeModel, Run, Template, Attr, Source
+from components import ScrapeModel, Phase, Template, Attr, Source
 from pymongo import MongoClient
 from workers import WebSource
 from parsers import HTMLParser
@@ -10,8 +10,8 @@ db = cl.erowid
 col = db.drug_report
 
 erowid = ScrapeModel(name='erowid', domain='https://www.erowid.org/experiences/',
-    num_getters=2, runs=[
-    Run(source_worker=WebSource, parser=HTMLParser, sources=[
+    num_getters=2, phases=[
+    Phase(source_worker=WebSource, parser=HTMLParser, sources=[
         Source(url="https://www.erowid.org/experiences/exp.cgi?ShowViews=1&Cellar=0&Start=0&Max=24777")],
         templates=(
             Template(
@@ -44,7 +44,7 @@ erowid = ScrapeModel(name='erowid', domain='https://www.erowid.org/experiences/'
         )
     ),
 
-    Run(source_worker=WebSource, parser=HTMLParser,
+    Phase(source_worker=WebSource, parser=HTMLParser,
         templates=(
             Template(
                 name='drug_report', selector='',

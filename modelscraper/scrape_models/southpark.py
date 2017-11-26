@@ -1,5 +1,5 @@
 from dispatcher import Dispatcher
-from models import ScrapeModel, Run, Template, Attr, Source
+from components import ScrapeModel, Phase, Template, Attr, Source
 from pymongo import MongoClient
 from workers import WebSource
 from parsers import HTMLParser
@@ -10,9 +10,9 @@ db = cl.southpark
 col = db.video
 
 southpark = ScrapeModel(name='southpark', domain='http://southpark.cc.com/',
-    num_getters=2, runs=[
+    num_getters=2, phases=[
     
-    Run(source_worker=WebSource, parser=HTMLParser, sources=[
+    Phase(source_worker=WebSource, parser=HTMLParser, sources=[
         Source(url="http://southpark.cc.com/")],
         templates=(
             Template(
@@ -30,7 +30,7 @@ southpark = ScrapeModel(name='southpark', domain='http://southpark.cc.com/',
         )
     ),
     
-    Run(source_worker=WebSource, parser=HTMLParser, sources=[
+    Phase(source_worker=WebSource, parser=HTMLParser, sources=[
         Source(url="http://southpark.cc.com/")],
         templates=(
             Template(

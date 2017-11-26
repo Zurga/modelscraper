@@ -1,5 +1,5 @@
 from dispatcher import Dispatcher
-from models import ScrapeModel, Run, Template, Attr, Source
+from components import ScrapeModel, Phase, Template, Attr, Source
 from pymongo import MongoClient
 from workers import WebSource
 from parsers import HTMLParser
@@ -10,9 +10,9 @@ db = cl.belgian_parlement_roles
 col = db.government
 
 belgian_parlement_roles = ScrapeModel(name='belgian_parlement_roles', domain='https://fr.wikipedia.org/',
-    num_getters=2, runs=[
+    num_getters=2, phases=[
 
-    Run(source_worker=WebSource, parser=HTMLParser, sources=[
+    Phase(source_worker=WebSource, parser=HTMLParser, sources=[
         Source(url="https://fr.wikipedia.org/wiki/Liste_des_gouvernements_de_la_Belgique")],
         templates=(
             Template(
@@ -25,7 +25,7 @@ belgian_parlement_roles = ScrapeModel(name='belgian_parlement_roles', domain='ht
         )
     ),
 
-    Run(source_worker=WebSource, parser=HTMLParser,
+    Phase(source_worker=WebSource, parser=HTMLParser,
         templates=(
             Template(
                 name='government', selector='table:nth-of-type(1) tr',

@@ -1,4 +1,4 @@
-from modelscraper.models import ScrapeModel, Run, Template, Attr, Source
+from modelscraper.components import ScrapeModel, Phase, Template, Attr, Source
 from modelscraper.parsers import JSONParser
 from pymongo import MongoClient
 
@@ -59,8 +59,8 @@ sources = (Source(url=search_url),)
 
 volkskrant = ScrapeModel(
     name='volkskrant', domain='volkskrant',
-    runs=[
-        Run(parser=JSONParser, n_workers=1, sources=sources,
+    phases=[
+        Phase(parser=JSONParser, n_workers=5, sources=sources,
             templates=(search_result, next_search)),
-        Run(parser=JSONParser, n_workers=5, sources=sources, templates=(article,)),
+        Phase(parser=JSONParser, n_workers=5, sources=sources, templates=(article,)),
     ])

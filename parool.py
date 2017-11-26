@@ -1,13 +1,16 @@
 from modelscraper.dispatcher import Dispatcher
-from modelscraper.models import ScrapeModel, Run, Template, Attr, Source
+from modelscraper.components import ScrapeModel, Phase, Template, Attr, Source
 from modelscraper.workers import WebSource
 from modelscraper.parsers import HTMLParser
+from pymongo import MongoClient
+
+cl = MongoClient()
 
 cookie = {'nl_cookiewall_version': '1'}
 
 telegraaf_url = 'http://www.telegraaf.nl/jsp/search_result_page.jsp?method=&keyword=de&pagenr={}'
-telegraaf_search = [Source(url=telegraaf_url.format(i)) for i in
-                    range(1, 5001)]
+telegraaf_search = (Source(url=telegraaf_url.format(i)) for i in
+                    range(1, 5001))
 
 calendar = Template(
     name='archive_url', selector='', attrs=(
@@ -70,18 +73,18 @@ article = Template(
 parool = ScrapeModel(
     name='parool', domain='http://www.parool.nl/',
     cookies=cookie,
-    num_getters=1, runs=[
-        Run(source_worker=WebSource, parser=HTMLParser, sources=[
+    num_getters=1, phases=[
+        Phase(source_worker=WebSource, parser=HTMLParser, sources=[
             Source(url="http://www.parool.nl/archief/2012")],
             templates=(calendar, year)
             ),
-        Run(source_worker=WebSource, parser=HTMLParser,
+        Phase(source_worker=WebSource, parser=HTMLParser,
             templates=(
                 article_url(db_type='mongo_db', db='parool',
                             table='article_urls'),
                 pagination)
             ),
-        Run(source_worker=WebSource, parser=HTMLParser,
+        Phase(source_worker=WebSource, parser=HTMLParser,
             templates=(article(db_type='mongo_db', db='parool',
                                table='articles'),
                        )
@@ -91,16 +94,16 @@ parool = ScrapeModel(
 volkskrant = ScrapeModel(
     name='volkskrant', domain='http://www.volkskrant.nl/',
     cookies={'nl_cookiewall_version': '1'},
-    num_getters=1, runs=[
-        Run(source_worker=WebSource, parser=HTMLParser, sources=[
+    num_getters=1, phases=[
+        Phase(source_worker=WebSource, n_workers=2, parser=HTMLParser, sources=[
             Source(url="http://www.volkskrant.nl/archief/1997")],
             templates=(calendar, year)
             ),
-        Run(source_worker=WebSource, parser=HTMLParser,
+        Phase(source_worker=WebSource, n_workers=2, parser=HTMLParser,
             templates=(article_url(db_type='mongo_db', db='volkskrant',
                                    table='article_urls'), pagination),
             ),
-        Run(source_worker=WebSource, parser=HTMLParser,
+        Phase(source_worker=WebSource, n_workers=3, parser=HTMLParser,
             templates=(
                 article(
                     selector='.article__main',
@@ -120,20 +123,26 @@ volkskrant = ScrapeModel(
 
 telegraaf = ScrapeModel(
     name='telegraaf', domain='http://www.telegraaf.nl/',
-    cookies={'nl_cookiewall_version': '1',
+    cookies={
              'adBlockerDisabledAfterNotification': 'false',
              'adBlockerNotificationShowed': 'true',
              },
-    num_getters=2, runs=[
-        Run(source_worker=WebSource, parser=HTMLParser,
+    num_getters=1, phases=[
+        Phase(n_workers=1,
+            sources=(Source(url='http://www.telegraaf.nl'),)
+            ),
+        Phase(n_workers=2,
             sources=telegraaf_search,
             templates=(telegraaf_search_result,)
             ),
-        Run(source_worker=WebSource, parser=HTMLParser,
+        Phase(n_workers=1,
+            sources=telegraaf_search,
             templates=(
                 article(
                     selector='.tg-article-page',
                     db_type='mongo_db', db='telegraaf', table='articles',
+                    required=True,
+                    preview=True,
                     attrs=(
                         title_attr,
                         text_attr,
@@ -146,7 +155,3 @@ telegraaf = ScrapeModel(
                 )
             ),
     ])
-
-disp = Dispatcher()
-disp.add_scraper([volkskrant])
-disp.run()

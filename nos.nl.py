@@ -1,10 +1,12 @@
 from modelscraper.dispatcher import Dispatcher
-from modelscraper.models import ScrapeModel, Run, Template, Attr, Source
+from modelscraper.components import ScrapeModel, Phase, Template, Attr, Source
 from modelscraper.workers import WebSource
 from modelscraper.parsers import HTMLParser
 import datetime
 
+from pymongo import MongoClient
 
+cl = MongoClient()
 categories = [
     'binnenland',
     'buitenland',
@@ -46,27 +48,32 @@ article = Template(
         tags_attr
     )
 )
-nos = ScrapeModel(name='nos.nl', domain='http://nos.nl', num_getters=2, runs=[
-    Run(source_worker=WebSource, parser=HTMLParser, sources=nos_sources,
-        templates=[
-            Template(
-                name='article_url', selector='#archief li',
-                db_type='mongo_db', db='nos_nl', table='article_urls',
-                attrs=[
-                    Attr(name='url', selector='a', func='sel_attr',
-                         kws={'attr': 'href'}, source={'active': False}),
-                ]
-            )
-        ]
-    ),
-    Run(templates=(article(
+Phase(source_worker=WebSource, parser=HTMLParser, sources=nos_sources,
+    templates=[
+        Template(
+            name='article_url', selector='#archief li',
+            db_type='mongo_db', db='nos_nl', table='article_urls',
+            attrs=[
+                Attr(name='url', selector='a', func='sel_attr',
+                        kws={'attr': 'href'}, source={'active': False}),
+            ]
+        )
+    ]
+),
+
+parsed = [a['url'] for cat in categories for a in
+          cl.nos_nl.articles.find({'category': cat})]
+nos_sources = [Source(url=url['url'],
+                      attrs=[Attr(name='category', value=url['category'])])
+               for url in cl.nos_nl.article_urls.find()
+               if url['url'] not in parsed]
+nos = ScrapeModel(name='nos.nl', domain='http://nos.nl', num_getters=10, phases=[
+    Phase(n_workers=5, sources=nos_sources, templates=(article(
         db_type='mongo_db',
         db='nos_nl',
         table='articles'),
-    )
-    )
-]
-)
+    ))
+])
 
 disp = Dispatcher()
 disp.add_scraper(nos)

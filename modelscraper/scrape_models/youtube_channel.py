@@ -1,5 +1,5 @@
 from dispatcher import Dispatcher
-from models.models import ScrapeModel, Run, Template, Attr, Source
+from components import ScrapeModel, Phase, Template, Attr, Source
 from pymongo import MongoClient
 from workers import WebSource
 from parsers.html_parser import HTMLParser
@@ -16,8 +16,8 @@ url = 'https://youtube.com/'
 
 youtube_channel = ScrapeModel(
     name='youtube_channel', domain='https://youtube.com/', num_getters=2, awaiting=True,
-    runs=[
-    Run(source_worker=WebSource, parser=HTMLParser, sources=[
+    phases=[
+    Phase(source_worker=WebSource, parser=HTMLParser, sources=[
         Source(url='https://www.youtube.com/user/ozzymanreviews/videos'),
         Source(url='https://www.youtube.com/user/Draadstal/videos'),
         Source(url='https://www.youtube.com/channel/UCQMs9pijXYAdqvkEMJyCM4g/videos'),

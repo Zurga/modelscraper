@@ -1,5 +1,5 @@
 from dispatcher import Dispatcher
-from models import ScrapeModel, Run, Template, Attr, Source
+from components import ScrapeModel, Phase, Template, Attr, Source
 from workers import WebSource
 from parsers import HTMLParser
 import string
@@ -8,8 +8,8 @@ from pymongo import MongoClient
 
 petitions = ScrapeModel(
     name='petitions', domain='https://petities.nl/', num_getters=2,
-    runs=[
-        Run(source_worker=WebSource, parser=HTMLParser, sources=(
+    phases=[
+        Phase(source_worker=WebSource, parser=HTMLParser, sources=(
             Source(url="https://petities.nl/petitions/borstkankeronderzoek-vervroegen/signatures?locale=nl"),),
             templates=[
                 Template(name='next_page', selector='.navigation-bar .navigation-bar',

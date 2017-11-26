@@ -8,8 +8,8 @@ from pymongo import MongoClient
 
 client = MongoClient()
 
-autoscout = models.ScrapeModel(name='autoscout24', domain='autoscout24.nl', num_get=10, runs=[
-    models.Run(repeat=True,getters=[models.Getter(url='https://labs.volkskrant.nl/api/examens/?action=vote&id=3864')])
+autoscout = ScrapeModel(name='autoscout24', domain='autoscout24.nl', num_get=10, phases=[
+    Phase(repeat=True,getters=[models.Getter(url='https://labs.volkskrant.nl/api/examens/?action=vote&id=3864')])
 ])
 dis = Dispatcher()
 dis.add_scraper(autoscout)

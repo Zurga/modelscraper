@@ -1,12 +1,12 @@
 from dispatcher import Dispatcher
 from workers import WebSource
 from parsers import HTMLParser
-from models import ScrapeModel, Run, Template, Attr, Source
+from components import ScrapeModel, Phase, Template, Attr, Source
 
 motorparts = ScrapeModel(
     name='motorparts', domain='http://www.2wheelpros.com', num_sources=2,
-    runs=[
-        Run(source_worker=WebSource, parser=HTMLParser,
+    phases=[
+        Phase(source_worker=WebSource, parser=HTMLParser,
             sources=(Source(url='http://www.2wheelpros.com/oem-parts/'),),
             templates=(
                 Template(name='brand',
@@ -15,18 +15,18 @@ motorparts = ScrapeModel(
                                   source={'active': False}),
                          ),),)
             ),
-        Run(source_worker=WebSource, parser=HTMLParser, templates=(
+        Phase(source_worker=WebSource, parser=HTMLParser, templates=(
             Template(name='year', selector='.yearlink', attrs=(
                 Attr(name='url', func='sel_url', source={'active': False}),)),),
           ),
-        Run(source_worker=WebSource, parser=HTMLParser, templates=(
+        Phase(source_worker=WebSource, parser=HTMLParser, templates=(
             Template(name='model', selector='.modellink', attrs=(
                 Attr(name='url', func='sel_url', source={'active': False}),
             )
             ),
         ),
         ),
-        Run(source_worker=WebSource, parser=HTMLParser, templates=(
+        Phase(source_worker=WebSource, parser=HTMLParser, templates=(
             Template(name='partCategory', db='motorparts',
                      table='part_categories', source={'active':False,
                                                       'parent':True},
@@ -52,7 +52,7 @@ motorparts = ScrapeModel(
             )),
             )
         ),
-        Run(source_worker=WebSource, parser=HTMLParser, templates=(
+        Phase(source_worker=WebSource, parser=HTMLParser, templates=(
             Template(name='part', selector='.scrollable-area-2 .cart-table tr',
                      db='motorparts', table='parts', func='update',
                      attrs=(

@@ -1,5 +1,5 @@
 from dispatcher import Dispatcher
-from models import ScrapeModel, Run, Template, Attr, Source
+from components import ScrapeModel, Phase, Template, Attr, Source
 from pymongo import MongoClient
 from workers import WebSource
 from parsers import HTMLParser
@@ -12,8 +12,8 @@ col = db.season
 filepath = '/mnt/Movies/theoffice/'
 
 theoffice = ScrapeModel(name='theoffice', domain='http://watchtheofficeonline.com',
-    num_getters=2, runs=[
-    Run(source_worker=WebSource, parser=HTMLParser, sources=[
+    num_getters=2, phases=[
+    Phase(source_worker=WebSource, parser=HTMLParser, sources=[
         Source(url="http://watchtheofficeonline.com/s{}e{}".format(season,
                                                                    episode))
         for season in range(1, 10) for episode in range(1, 30)],

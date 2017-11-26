@@ -1,21 +1,22 @@
 from modelscraper.dispatcher import Dispatcher
-from modelscraper.models import ScrapeModel, Run, Template, Attr, Source
+from modelscraper.components import ScrapeModel, Phase, Template, Attr, Source
+import cProfile
 
 
 uefa = ScrapeModel(
-    name='eufa', domain='http://uefa.com', num_getters=2, runs=[
-    Run(sources=(
+    name='eufa', domain='http://uefa.com', num_getters=2, phases=[
+    Phase(sources=(
         Source(url="http://www.uefa.com/uefaeuro/season=2016/teams/index.html"),),
-        templates=[
+        templates=(
             Template(
                 name='team', selector='.teams--qualified',
                 attrs=[
                     Attr(name='url', selector='a',
                                 func='sel_url', source={'active': False}),
                 ]
-            )]
+            ),)
     ),
-    Run(templates=[
+    Phase(synchronize=False,templates=[
             Template(
                 name='player', selector='.squad--team-player',
                 db_type='mongo_db', db='uefa', table='players',

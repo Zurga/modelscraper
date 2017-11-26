@@ -4,7 +4,7 @@ import re
 import json
 import lxml.html as lxhtml
 import time
-from models import Attr, Template, Getter
+from components import Attr, Template, Getter
 
 
 class ParseWorker(Thread):

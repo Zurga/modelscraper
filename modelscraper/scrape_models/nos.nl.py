@@ -1,12 +1,12 @@
 from dispatcher import Dispatcher
-from models import models as models
+from components import as models
 from pymongo import MongoClient
 from workers import WebSource
 from parsers.html_parser import HTMLParser
 import datetime
 
 
-print(dir(models))
+print(dir()
 cl = MongoClient()
 db = cl.nos_nl
 col = db.headlines
@@ -33,36 +33,36 @@ if last:
     begin = datetime.datetime.strptime(last, '%Y-%m-%dT%H:%M:%S%z')
     now = datetime.datetime.now(tz=begin.tzinfo)
 dates = [begin + datetime.timedelta(days=d) for d in range(0, (now - begin).days)]
-nos = models.ScrapeModel(name='nos.nl', domain='http://nos.nl', num_getters=2, runs=[
-    models.Run(source_worker=WebSource, parser=HTMLParser, sources=(
-        models.Source(url="http://nos.nl/nieuws/%s/archief/%s" %(cat, date.strftime('%Y-%m-%d')),
-                      attrs=[models.Attr(name='category', value=cat),
+nos = ScrapeModel(name='nos.nl', domain='http://nos.nl', num_getters=2, phases=[
+    Phase(source_worker=WebSource, parser=HTMLParser, sources=(
+        Source(url="http://nos.nl/nieuws/%s/archief/%s" %(cat, date.strftime('%Y-%m-%d')),
+                      attrs=[Attr(name='category', value=cat),
                              ])
                     for cat in categories for date in dates),
         templates=[
-            models.Template(
+            Template(
                 name='headline', selector='#archief li',
                 db_type='mongo_db', db='nos_nl', table='headlines',
                 attrs=[
-                    models.Attr(name='url', selector='a', func='sel_attr',
+                    Attr(name='url', selector='a', func='sel_attr',
                                 kws={'attr': 'href'}, source={'active': False}),
-                    models.Attr(name='title', selector='.link-hover', func='sel_text'),
-                    models.Attr(name='datetime', selector='time', func='sel_attr',
+                    Attr(name='title', selector='.link-hover', func='sel_text'),
+                    Attr(name='datetime', selector='time', func='sel_attr',
                                 kws={'attr': 'datetime'}),
                 ]
             )
         ]
     ),
-    models.Run(source_worker=WebSource, parser=HTMLParser,
+    Phase(source_worker=WebSource, parser=HTMLParser,
         templates=[
-            models.Template(name='headline', db_type='mongo_db', db='nos_nl',
+            Template(name='headline', db_type='mongo_db', db='nos_nl',
                             table='articles',
                 attrs=[
-                    models.Attr(name='title', selector='h1', func='sel_text'),
-                    models.Attr(name='text', selector='.article_body', func='sel_text'),
-                    models.Attr(name='publish', selector='time:nth-of-type(1)', func='sel_attr',
+                    Attr(name='title', selector='h1', func='sel_text'),
+                    Attr(name='text', selector='.article_body', func='sel_text'),
+                    Attr(name='publish', selector='time:nth-of-type(1)', func='sel_attr',
                                 kws={'attr': 'datetime'}),
-                    models.Attr(name='edit', selector='time:nth-of-type(2)', func='sel_attr',
+                    Attr(name='edit', selector='time:nth-of-type(2)', func='sel_attr',
                                 kws={'attr': 'datetime'}),
                 ]
             )

@@ -1,11 +1,11 @@
-from models import ScrapeModel, Run, Source, Template, Attr
+from components import ScrapeModel, Phase, Source, Template, Attr
 from dispatcher import Dispatcher
 from workers import WebSource
 from parsers import HTMLParser
 
 
-funda = ScrapeModel(name='funda.nl', domain='http://funda.nl', num_sources=1, runs=[
-    Run(parser=HTMLParser, source_worker=WebSource, sources=[
+funda = ScrapeModel(name='funda.nl', domain='http://funda.nl', num_sources=1, phases=[
+    Phase(parser=HTMLParser, source_worker=WebSource, sources=[
         Source(url='http://funda.nl/huur/amsterdam/woonhuis/'),
         Source(url='http://funda.nl/huur/amsterdam/appartement/'),
         Source(url='http://funda.nl/koop/amsterdam/woonhuis/'),
@@ -48,7 +48,7 @@ funda = ScrapeModel(name='funda.nl', domain='http://funda.nl', num_sources=1, ru
                         # source=Source()
                             )])
         ]),
-    Run(parser=HTMLParser, source_worker=WebSource, active=False, templates=[
+    Phase(parser=HTMLParser, source_worker=WebSource, active=False, templates=[
         Template(name='bezichtiging', selector='.makelaars-contact-form', attrs=[
             Attr(name='__RequestVerificationToken',
                  selector='input[name="__RequestVerificationToken"]', func='sel_attr',

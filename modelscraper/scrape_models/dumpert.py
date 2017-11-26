@@ -8,7 +8,7 @@ dumpert_class = [
     {'name': 'Dumpert',
      'domain': 'http://dumpert.nl',
      'num_get': 1,
-     'runs': [
+     'phases': [
          {'to_getter': [{'url': 'http://dumpert.nl/{}/'.format(i if i else ''),
                          'active': 1} for i in range(2)],
           'to_parser': {
