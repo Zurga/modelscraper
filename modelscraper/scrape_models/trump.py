@@ -1,4 +1,4 @@
-from models import *  #noqa
+from components import *  #noqa
 from dispatcher import Dispatcher
 import random
 
@@ -19,8 +19,8 @@ form_fields = {'name1': 'Don',
                 'form_url': "http://citizensfortrump.com/get-involved/",
                 }
 
-vote = ScrapeModel(name='trumpvolunteer', domain='citizensfortrump.com', runs=[
-    Run(to_getter=[
+vote = ScrapeModel(name='trumpvolunteer', domain='citizensfortrump.com', phases=[
+    Phase(to_getter=[
         Getter(url='http://citizensfortrump.com/get-involved',
             meta_attrs=[Attr(name=key, value=val) for key, val in form_fields.items()])
         ],

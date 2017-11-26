@@ -1,5 +1,5 @@
 from dispatcher import Dispatcher
-from models import ScrapeModel, Run, Template, Attr, Source
+from components import ScrapeModel, Phase, Template, Attr, Source
 from pymongo import MongoClient
 from workers import WebSource
 from parsers import HTMLParser
@@ -10,9 +10,9 @@ db = cl.efi_dumps
 col = db.forum_post
 
 efi_dumps = ScrapeModel(name='efi_dumps', domain='https://ghostlyhaks.com/',
-    num_getters=2, runs=[
+    num_getters=2, phases=[
 
-    Run(source_worker=WebSource, parser=HTMLParser, sources=[
+    Phase(source_worker=WebSource, parser=HTMLParser, sources=[
         Source(url="https://ghostlyhaks.com/forum/rom-eeprom-bios-efi-uefi")],
         templates=(
             Template(
@@ -37,7 +37,7 @@ efi_dumps = ScrapeModel(name='efi_dumps', domain='https://ghostlyhaks.com/',
         )
     ),
 
-    Run(source_worker=WebSource, parser=HTMLParser,
+    Phase(source_worker=WebSource, parser=HTMLParser,
         templates=(
             Template(
                 name='forum_post', selector='a[href*=".zip"], a[href*=".tar"]',

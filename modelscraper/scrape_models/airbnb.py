@@ -49,7 +49,7 @@ clss = [
      'domain': 'http://airbnb.com/',
      'time_out': 0.5,
      'num_get': 30,
-     'runs': [
+     'phases': [
          {'to_getter': [{'url': 'https://www.airbnb.com/s/amsterdam--netherlands',
                          'kwargs': {
                              'params': {'guests':5,

@@ -1,5 +1,5 @@
 from dispatcher import Dispatcher
-from models import ScrapeModel, Run, Template, Attr, Source
+from components import ScrapeModel, Phase, Template, Attr, Source
 from pymongo import MongoClient
 from workers import WebSource
 from parsers import HTMLParser
@@ -10,9 +10,9 @@ db = cl.nytimes
 col = db.menu
 
 nytimes = ScrapeModel(name='nytimes', domain='https://www.nytimes.com/',
-    num_getters=2, runs=[
+    num_getters=2, phases=[
 
-    Run(source_worker=WebSource, parser=HTMLParser, sources=[
+    Phase(source_worker=WebSource, parser=HTMLParser, sources=[
         Source(url="https://www.nytimes.com/")],
         templates=(
             Template(
@@ -26,7 +26,7 @@ nytimes = ScrapeModel(name='nytimes', domain='https://www.nytimes.com/',
         )
     ),
 
-    Run(source_worker=WebSource, parser=HTMLParser, sources=[
+    Phase(source_worker=WebSource, parser=HTMLParser, sources=[
         Source(url="https://www.nytimes.com/")],
         templates=(
             Template(

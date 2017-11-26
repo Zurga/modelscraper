@@ -1,5 +1,5 @@
 from dispatcher import Dispatcher
-from models import ScrapeModel, Run, Template, Attr, Source
+from components import ScrapeModel, Phase, Template, Attr, Source
 from pymongo import MongoClient
 from workers import WebSource
 from parsers import HTMLParser
@@ -10,8 +10,8 @@ db = cl.npo_tv_programs
 col = db.programma
 
 npo_tv_programs = ScrapeModel(name='npo_tv_programs', domain='http://npo.nl',
-    num_getters=2, runs=[
-    Run(source_worker=WebSource, parser=HTMLParser, sources=[
+    num_getters=2, phases=[
+    Phase(source_worker=WebSource, parser=HTMLParser, sources=[
         Source(url="http://www.npo.nl/programmas/a-z", params={'page': i})
         for i in range(0, 242)],
         templates=(
@@ -28,7 +28,7 @@ npo_tv_programs = ScrapeModel(name='npo_tv_programs', domain='http://npo.nl',
                 name='next_url'),
         )
     ),
-    Run(source_worker=WebSource, parser=HTMLParser,
+    Phase(source_worker=WebSource, parser=HTMLParser,
         templates=(
             Template(
                 name='episodes', selector='.item-list.item-container div.item',

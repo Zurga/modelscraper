@@ -1,6 +1,5 @@
 import re
 import json
-from multiprocessing import Process, JoinableQueue
 from queue import Empty
 from functools import reduce
 from datetime import datetime
@@ -15,20 +14,27 @@ from scrapely import Scraper
 from .helpers import str_as_tuple
 
 
+# Decorator to copy docstrings from other functions
+def add_other_doc(other_func):
+    def _doc(func):
+        if other_func.__doc__:
+            func.__doc__ = func.__doc__ + other_func.__doc__
+        return func
+    return _doc
+
+
 class BaseParser:
     '''
     This class implements the methods:
         _gen_source: generate a source if the template has that specified.
         _add_source: add a source to the current queue or
                      forward it to another run.
-        _handle_empty
     which can all be overridden in subclasses.
     I
     '''
     def __init__(self, parent=None, templates=[], **kwargs):
         if not parent:
-            raise Exception('No parent or run was specified')
-        super(BaseParser, self).__init__()
+            raise Exception('No parent or phase was specified')
         self.name = parent.name
         self.domain = parent.domain
         self.db = parent.db
@@ -167,18 +173,11 @@ class BaseParser:
             return self._apply_funcs(parsed, parse_funcs[1:], kws[1:])
 
     def _value(self, parsed, index=None):
-        if parsed:
-            if len(parsed) == 1:
-                return parsed[0]
-            return parsed[index] if index else parsed
-
-    def _handle_empty(self):
-        while not self.in_q.empty():
-            try:
-                self.in_q.get(False)
-            except Empty:
-                continue
-            self.source_q.task_done()
+        if type(parsed) != list:
+            parsed = list(parsed)
+        if len(parsed) == 1:
+            return parsed[0]
+        return parsed[index] if index else parsed
 
     # TODO check if this belongs here...
     def _copy_attrs(self, objct, source):
@@ -203,6 +202,36 @@ class BaseParser:
             new_source.attrs = {key: attr._replicate() for key, attr in
                                 objct.attrs.items()}
         return new_source
+
+    def modify_text(self, text, replacers=None, substitute='', regex: str='',
+                numbers: bool=False, needle=None):
+        """
+        replacers: string or list of values/regular expressions that have to be
+            replaced in the text. Used in combination with substitute.
+        substitute: the substitute used in the replacers parameter.
+        """
+        if replacers:
+            replacers = str_as_tuple(replacers)
+            regex = re.compile('|'.join(replacers))
+            text = (regex.sub(substitute, t) for t in text)
+
+        if regex:
+            regex = re.compile(regex)
+            text = (f for t in text for f in regex.findall(t))
+
+        if needle:
+            if not all([re.match(needle, t) in t for t in text]):
+                return None
+
+        if numbers:
+            text = [int(''.join([c for c in t if c.isdigit() and c]))
+                    for t in text if t and any(map(str.isdigit, t))]
+        return text
+
+    def _sel_text(self, text, index, **kwargs):
+        text = (t.lstrip().rstrip() for t in text if t)
+        text = self.modify_text(text, **kwargs)
+        return self._value(text, index)
 
 class HTMLParser(BaseParser):
     '''
@@ -333,48 +362,17 @@ class HTMLParser(BaseParser):
                 elements.append(elem)
         return elements
 
-    def modify_text(self, text, replacers=None, substitute='', regex: str='',
-                numbers: bool=False, needle=None):
-        if replacers:
-            replacers = str_as_tuple(replacers)
-            regex = re.compile('|'.join(replacers))
-            text = [regex.sub(substitute, t) for t in text]
-
-        if regex:
-            regex = re.compile(regex)
-            text = [f for t in text for f in regex.findall(t)]
-
-        if needle:
-            if not all([re.match(needle, t) in t for t in text]):
-                return None
-
-        if numbers:
-            text = [int(''.join([c for c in t if c.isdigit() and c]))
-                    for t in text if t and any(map(str.isdigit, t))]
-        return text
-
-    def sel_text(self, elements, all_text=True, debug=False, replacers=None,
-                 substitute='', regex: str='', numbers: bool=False, index=None,
-                 needle=None):  # noqa
+    @add_other_doc(BaseParser.modify_text)
+    def sel_text(self, elements, all_text=True, index=None,
+                 **kwargs):  # noqa
         '''
         Select all text for a given selector.
         '''
-        try:
-            if all_text:
-                text = [el.text_content() for el in elements]
-            else:
-                text = [el.text for el in elements]
-
-            text = [t.lstrip().rstrip() for t in text if t]
-            text = self.modify_text(text, replacers=replacers,
-                                    substitute=substitute, regex=regex,
-                                    numbers=numbers, needle=needle)
-            if text:
-                if debug:
-                    print(elements, text)
-                return self._value(text, index)
-        except Exception as e:
-            print(elements, e)
+        if all_text:
+            text = [el.text_content() for el in elements]
+        else:
+            text = [el.text for el in elements]
+        return self._sel_text(text, index, **kwargs)
 
     def sel_table(self, elements, columns: int=2, offset: int=0):
         '''
@@ -409,24 +407,18 @@ class HTMLParser(BaseParser):
                         for row in rows]
         return self._value(selected, index)
 
-    def sel_attr(self, elements, attr: str='', index: int=None,
-                replacers=None, substitute='', regex: str='',
-                 numbers: bool=False, needle=None):
+    def sel_attr(self, elements, attr: str='', index: int=None, **kwargs):
         '''
         Extract an attribute of an HTML element. Will return
         a list of attributes if multiple tags match the
         selector.
+
+        The **kwargs are the keyword arguments that can be added are from
+        the BaseParser.modify_text method.
         '''
 
-        attrs = [el.attrib.get(attr) for el in elements]
-        if regex:
-            attrs = [f for a in attrs for f in re.findall(regex, a)]
-            attrs = self.modify_text(attrs, replacers=replacers,
-                                     substitute=substitute,
-                                     regex=regex, numbers=numbers,
-                                     needle=needle)
-
-        return self._value(attrs, index)
+        attrs = (el.attrib.get(attr) for el in elements)
+        return self._sel_text(attrs, index, **kwargs)
 
     def sel_url(self, elements, index: int=None, **kwargs):
         return self.sel_attr(elements, attr='href', index=index, **kwargs)
@@ -524,38 +516,12 @@ class JSONParser(BaseParser):
     def _get_selector(self, model):
         return str_as_tuple(model.selector)
 
-    def sel_text(self, elements, replacers=None, substitute='', regex: str='',  # noqa
-                numbers: bool=False, index=None, needle=None, all_text=True,
-                split='', as_list=False, debug=False):  # noqa
-        '''
-        Select all text for a given selector.
-        '''
-        try:
-            text = [t.lstrip().rstrip() for t in elements if t]
-
-            if replacers:
-                regex = re.compile('|'.join(replacers))
-                text = [regex.sub(substitute, t) for t in text]
-
-            if regex:
-                regex = re.compile(regex)
-                text = [f for t in text for f in regex.findall(t)]
-                # set types correctly
-            if needle:
-                regex = re.compile(needle)
-                if not all([regex.match(t) in t for t in text]):
-                    return None
-
-            if numbers:
-                text = [int(''.join([c for c in t if c.isdigit() and c]))
-                        for t in text if t and any(map(str.isdigit, t))]
-
-            if text:
-                if debug:
-                    print(text)
-                return self._value(text, index)
-        except Exception as e:
-            print('sel_text', elements, e)
+    @add_other_doc(BaseParser.modify_text)
+    def sel_text(self, elements, index=None, debug=False, **kwargs):  # noqa
+        """
+        Selects the text from data.
+        """
+        return self._sel_text(elements, index, **kwargs)
 
     def sel_dict(self, elements):
         return elements
@@ -574,10 +540,16 @@ class TextParser(BaseParser):
         return str_as_tuple(data)
 
     def _apply_selector(self, selector, data):
+        if selector:
+            return data.split(selector)
         return data
 
     def _get_selector(self, model):
         return str_as_tuple(model.selector)
 
-    def sel_text(self, elements):
+    @add_other_doc(BaseParser.modify_text)
+    def sel_text(self, elements, **kwargs):
+        """
+        Selects the text from data.
+        """
         return elements

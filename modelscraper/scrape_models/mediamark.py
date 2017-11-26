@@ -13,7 +13,7 @@ clss = [
         {
         'name': 'mediamarkt',
         'domain': 'http://www.mediamarkt.nl',
-        'runs': [
+        'phases': [
             {
             'to_getter': [
                 {'url': 'http://www.mediamarkt.nl/',
@@ -116,7 +116,7 @@ clss = [
         {
         'name': 'cameranu',
         'domain': 'http://www.cameranu.nl',
-        'runs': [
+        'phases': [
             {'to_getter': [{ 'url': 'http://cameranu.nl', 'active': 1, },
                            ],
              'to_parser': {

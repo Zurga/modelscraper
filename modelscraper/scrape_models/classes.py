@@ -1,13 +1,13 @@
 # TODO Set the right classes for the websites.
 from dispatcher import Dispatcher
-from models import Attr, Source, HTMLObject, Run, ScrapeModel, Follow
+from components import Attr, Source, HTMLObject, Phase, ScrapeModel, Follow
 
-kinky =ScrapeModel(name='kinky', domain='kinky.nl', runs=[
-    Run(source=[Source(url='http://kinky.nl/sex-afspraken/vrouwen/default.aspx?pagesize=4500')],
+kinky =ScrapeModel(name='kinky', domain='kinky.nl', phases=[
+    Phase(source=[Source(url='http://kinky.nl/sex-afspraken/vrouwen/default.aspx?pagesize=4500')],
         templates=[Template(name='advert', selector='.advertentie_kop > a',
                  attrs=[Attr(name='url', source={'active': False})])
         ]),
-    Run(templates=[
+    Phase(templates=[
         Template(name='advert', selector='.advertentie_kop > a', db='kinky.nl', table='adverts',
                 Attr(name='add_text', func= 'sel_text', selector='description p'),
                 Attr(name='possibilities', func= 'sel_text', selector= '.possibilities li'),

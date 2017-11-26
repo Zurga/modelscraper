@@ -1,13 +1,13 @@
 from dispatcher import Dispatcher
-from models import ScrapeModel, Run, Template, Attr, Source
+from components import ScrapeModel, Phase, Template, Attr, Source
 from workers import WebSource
 from parsers import HTMLParser
 import string
 
 
 meertens = ScrapeModel(
-    name='namen', domain='http://www.meertens.knaw.nl/', num_getters=2, runs=[
-    Run(source_worker=WebSource, parser=HTMLParser, sources=(
+    name='namen', domain='http://www.meertens.knaw.nl/', num_getters=2, phases=[
+    Phase(source_worker=WebSource, parser=HTMLParser, sources=(
         Source(url="http://www.meertens.knaw.nl/nvb/naam/begintmet/" + l)
                     for l in ['Aad']), # string.ascii_lowercase),
         templates=[
@@ -36,7 +36,7 @@ meertens = ScrapeModel(
                 ])
             ]
     ),
-    Run(source_worker=WebSource, parser=HTMLParser, templates=[
+    Phase(source_worker=WebSource, parser=HTMLParser, templates=[
             Template(
                 name='name', selector='table.nameinfo', func='update',
                 kws={'key': 'name'}, db_type='mongo_db', db='names',
@@ -106,7 +106,7 @@ meertens = ScrapeModel(
             ),
         ]
     ),
-    Run(source_worker=WebSource, parser=HTMLParser, templates=[
+    Phase(source_worker=WebSource, parser=HTMLParser, templates=[
             Template(
                 name='history', selector='#content', db_type='mongo_db', db='names',
                 table='history2', kws={'key': 'name'}, attrs=[

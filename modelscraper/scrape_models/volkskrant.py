@@ -1,5 +1,5 @@
 from dispatcher import Dispatcher
-from models import ScrapeModel, Run, Template, Attr, Source
+from components import ScrapeModel, Phase, Template, Attr, Source
 from pymongo import MongoClient
 from workers import WebSource
 import datetime
@@ -15,8 +15,8 @@ print(today)
 
 volkskrant = ScrapeModel(
     name='volkskrant', domain='http://www.volkskrant.nl/', num_getters=2,
-    cookies={'nl_cookiewall_version': '1'}, runs=[
-        Run(source_worker=WebSource, parser=HTMLParser, sources=[
+    cookies={'nl_cookiewall_version': '1'}, phases=[
+        Phase(source_worker=WebSource, parser=HTMLParser, sources=[
             Source(url="http://www.volkskrant.nl/archief/{}".format(year))
             for year in range(1987, today)],
             templates=(
@@ -28,7 +28,7 @@ volkskrant = ScrapeModel(
                     ),
                 )
             ),
-        Run(source_worker=WebSource, parser=HTMLParser,
+        Phase(source_worker=WebSource, parser=HTMLParser,
             templates=(
                 Template(
                     name='article_url', selector='article',
@@ -46,7 +46,7 @@ volkskrant = ScrapeModel(
                     ),
                 ),
             ),
-        Run(source_worker=WebSource, parser=HTMLParser,
+        Phase(source_worker=WebSource, parser=HTMLParser,
             templates=(
                 Template(
                     name='article', selector='',

@@ -33,11 +33,11 @@ class ScrapeWorker(Process):
 
         db_threads = defaultdict(list)
 
-        for run in model.runs:
-            for template in run.templates:
+        for phase in model.phases:
+            for template in phase.templates:
                 if template.db_type:
                     db_threads[template.db_type].append(template)
-                self.check_functions(template, run)
+                self.check_functions(template, phase)
 
         for thread, templates in db_threads.items():
             queue = JoinableQueue()
@@ -50,32 +50,32 @@ class ScrapeWorker(Process):
     def run(self):
         # create the threads needed to scrape
         i = 0
-        while self.runs:
+        while self.phases:
             # if self.is_scheduled():
-            if i < len(self.runs):
-                run = self.runs[i]
+            if i < len(self.phases):
+                phase = self.phases[i]
             else:
                 break
-            print('running run:', i, run.name)
+            print('running phase:', i, phase.name)
             i += 1
 
-            # Check if the run has a parser, if not, reuse the one from the
-            # last run.
+            # Check if the phase has a parser, if not, reuse the one from the
+            # last phase.
             self.to_parse = 0
             self.parsed = 0
 
-            if run.active:
-                self.spawn_workforce(run)
-                self.add_sources(run)
+            if phase.active:
+                self.spawn_workforce(phase)
+                self.add_sources(phase)
                 self.to_forward = []
                 self.parse_sources()
 
-            if run.repeat:
-                self.runs.append(run)
-                print('Repeating run:', run.name)
+            if phase.repeat:
+                self.phases.append(phase)
+                print('Repeating phase:', phase.name)
             # else:
             #time.sleep(self.get_sleep_time())
-        print('Run:', i, 'stopped')
+        print('Phase:', i, 'stopped')
 
     def parse_sources(self):
         while True:
@@ -111,52 +111,50 @@ class ScrapeWorker(Process):
         print('parser_joined')
         print('Unparsed ', self.source_q.qsize())
 
-    def spawn_workforce(self, run):
-        # check if run reuses the current source workforce
-        if run.parser:
-            self.parser = run.parser(parent=self, templates=run.templates)
-        elif not self.parser and not run.parser:
+    def spawn_workforce(self, phase):
+        # check if phase reuses the current source workforce
+        if phase.parser:
+            self.parser = phase.parser(parent=self, templates=phase.templates)
+        elif not self.parser and not phase.parser:
             raise Exception('No parser was specified')
         else:
             parse_class = self.parser.__class__
-            self.parser = parse_class(parent=self, templates=run.templates)
+            self.parser = parse_class(parent=self, templates=phase.templates)
 
-        if run.n_workers:
-            n_workers = run.n_workers
+        if phase.n_workers:
+            n_workers = phase.n_workers
         else:
             n_workers = self.model.num_getters
 
         if not self.workers:
             for i in range(n_workers):
-                worker = run.source_worker(parent=self, id=i,
-                                           out_q=self.parse_q,
-                                           time_out=self.time_out)
+                worker = phase.source_worker(parent=self, id=i)
                 worker.start()
                 self.workers.append(worker)
 
-    def add_sources(self, run):
+    def add_sources(self, phase):
         urls_in_db = []
-        if run.synchronize:
-            urls_in_db = [url for url in self.get_scraped_urls(run)]
+        if phase.synchronize:
+            urls_in_db = [url for url in self.get_scraped_urls(phase)]
 
         for source in self.to_forward:
             if source.url not in urls_in_db:
                 self.source_q.put(source)
                 self.to_parse += 1
 
-        for source in run.sources:
+        for source in phase.sources:
             if source.from_db:
                 sources = self.dbs[source.from_db].read(source.from_db)
             if source.active:
                 self.source_q.put(source)
                 self.to_parse += 1
 
-    def get_scraped_urls(self, run):
-        for template in run.templates:
+    def get_scraped_urls(self, phase):
+        for template in phase.templates:
             if template.name in self.dbs:
                 for objct in self.dbs[template.name].read(template):
                     if objct:
-                        yield objct['url'].value
+                        yield objct.attrs['url'].value
 
     def _gen_source(self, objct, attr):
         for value in attr.value:
@@ -250,15 +248,15 @@ class ScrapeWorker(Process):
                           round(self.parser.total_time / self.parsed, 3)
                           ))
 
-    def check_functions(self, template, run):
+    def check_functions(self, template, phase):
         error_string = "One of these functions: {} is not implemented in {}."
         not_implemented = []
 
         for attr in template.attrs.values():
             for func in attr.func:
-                if not getattr(run.parser, func, False):
+                if not getattr(phase.parser, func, False):
                     not_implemented.append(func)
 
         if not_implemented:
             raise Exception(error_string.format(str(not_implemented),
-                                                run.parser.__class__.__name__))
+                                                phase.parser.__class__.__name__))

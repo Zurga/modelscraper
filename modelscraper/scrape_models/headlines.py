@@ -1,5 +1,5 @@
 from dispatcher import Dispatcher
-from models import ScrapeModel, Run, Template, Attr, Source
+from components import ScrapeModel, Phase, Template, Attr, Source
 from pymongo import MongoClient
 from workers import WebSource
 from parsers import HTMLParser
@@ -10,9 +10,9 @@ db = cl.headlines
 col = db.category
 
 headlines = ScrapeModel(name='headlines', domain='http://www.headlines24.nl/',
-    num_getters=2, runs=[
+    num_getters=2, phases=[
     
-    Run(source_worker=WebSource, parser=HTMLParser, sources=[
+    Phase(source_worker=WebSource, parser=HTMLParser, sources=[
         Source(url="http://www.headlines24.nl/")],
         templates=(
             Template(
@@ -30,7 +30,7 @@ headlines = ScrapeModel(name='headlines', domain='http://www.headlines24.nl/',
         )
     ),
     
-    Run(source_worker=WebSource, parser=HTMLParser, sources=[
+    Phase(source_worker=WebSource, parser=HTMLParser, sources=[
         Source(url="http://www.headlines24.nl/")],
         templates=(
             Template(

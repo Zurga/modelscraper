@@ -1,13 +1,13 @@
 from dispatcher import Dispatcher
-from models import Attr, Source, Template, Run, ScrapeModel
+from components import Attr, Source, Template, Phase, ScrapeModel
 from workers import WebSource
 from parsers import HTMLParser
 
 kinkycookies = {'ckieLegalIds': '4e17b168-5eb9-4c72-b7ee-3e8aebfd963e'}
 sexjobscookies = {'algemeneVoorwaardenVersie': '3'}
 
-kinky =ScrapeModel(name='kinky', domain='http://www.kinky.nl/', cookies=kinkycookies, runs=[
-    Run(source_worker=WebSource, parser=HTMLParser, sources=[
+kinky =ScrapeModel(name='kinky', domain='http://www.kinky.nl/', cookies=kinkycookies, phases=[
+    Phase(source_worker=WebSource, parser=HTMLParser, sources=[
         Source(url='http://www.kinky.nl/sex-afspraken/mannen/default.aspx?pagesize=5000',
                attrs=[Attr(name='sex', value='man')]),
         Source(url='http://www.kinky.nl/sex-afspraken/vrouwen/default.aspx?pagesize=5000',
@@ -30,8 +30,8 @@ kinky =ScrapeModel(name='kinky', domain='http://www.kinky.nl/', cookies=kinkycoo
                  ])
         ]),
     ])
-sexjobs =ScrapeModel(name='sexjobs', domain='http://www.sexjobs.nl/', cookies=sexjobscookies, runs=[
-    Run(source_worker=WebSource, parser=HTMLParser, sources=[
+sexjobs =ScrapeModel(name='sexjobs', domain='http://www.sexjobs.nl/', cookies=sexjobscookies, phases=[
+    Phase(source_worker=WebSource, parser=HTMLParser, sources=[
         Source(url='http://www.sexjobs.nl/dames-van-plezier/algemeen',
                attrs=[Attr(name='sex', value='vrouw')]),
         Source(url='http://www.sexjobs.nl/dames-van-plezier/thuisontvangst',
@@ -48,7 +48,7 @@ sexjobs =ScrapeModel(name='sexjobs', domain='http://www.sexjobs.nl/', cookies=se
                      source=True),
             ])
         ]),
-    Run(source_worker=WebSource, parser=HTMLParser, templates=[
+    Phase(source_worker=WebSource, parser=HTMLParser, templates=[
         Template(name='advert', selector='article', db_type='mongo_db', db='sexjobs', table='adds',
                  attrs=[
                      Attr(name='phone', selector='hidden-xs .advertentie-telefoonnummer', func='sel_text',

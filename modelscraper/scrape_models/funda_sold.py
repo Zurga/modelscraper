@@ -1,12 +1,12 @@
-from models import *  # noqa
+from components import *  # noqa
 from parse_functions import *  # noqa
 from store_functions import *  # noqa
 from get_functions import *  # noqa
 from dispatcher import Dispatcher
 
 
-funda = ScrapeModel(name='funda.nl', domain='http://funda.nl', runs=[
-    Run(to_getter=[Getter(url='http://www.funda.nl/koop/verkocht/')],
+funda = ScrapeModel(name='funda.nl', domain='http://funda.nl', phases=[
+    Phase(to_getter=[Getter(url='http://www.funda.nl/koop/verkocht/')],
         objects=[
             HTMLObject(name='house', selector='ul.object-list li.sold', store_func=store_mongo, kwargs={'db': 'funda', 'collection': 'sold'},
                        attrs=[
