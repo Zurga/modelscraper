@@ -1,23 +1,29 @@
-from modelscraper.dispatcher import Dispatcher
-from modelscraper.components import ScrapeModel, Phase, Template, Attr, Source
-from modelscraper.workers import WebSource
-from modelscraper.parsers import HTMLParser
+from dispatcher import Dispatcher
+import models
+from workers import WebSource
+from parsers import HTMLParser
+import string
+from pymongo import MongoClient
+import operator as op
 
 
 uefa = ScrapeModel(
-    name='eufa', domain='http://uefa.com', num_getters=2, phases=[
-    Phase(sources=(
-        Source(url="http://www.uefa.com/uefaeuro/season=2016/teams/index.html"),),
+    name='eufa', domain='https://chaturbate.com/', num_getters=2, phases=[
+    Phase(source_worker=WebSource, parser=HTMLParser, sources=(
+        Source(url="https://chaturbate.com/female-cams/"),),
         templates=[
             Template(
-                name='team', selector='.teams--qualified',
+                name='model', selector='.content .list li',
                 attrs=[
-                    Attr(name='url', selector='a',
-                                func='sel_url', source={'active': False}),
+                    Attr(name='url', selector='a:nth-of-type(2)',
+                                func='sel_attr', kws={'attr': 'href'},
+                                source={'active': False,
+                                        'src_template': 'https://chaturbate.com/api/panel/{}/'}),
                 ]
             )]
     ),
-    Phase(templates=[
+    Phase(source_worker=WebSource, parser=HTMLParser,
+        templates=[
             Template(
                 name='player', selector='.squad--team-player',
                 db_type='mongo_db', db='uefa', table='players',
@@ -25,7 +31,7 @@ uefa = ScrapeModel(
                     Attr(name='name', selector='.squad--player-name',
                                 func='sel_text'),
                     Attr(name='player_url', selector='.squad--player-name a',
-                                func='sel_url'),
+                                func='sel_attr', kws={'attr': 'href'}),
                     Attr(name='img', selector='.squad--player-img img',
                                 func='sel_attr', kws={'attr': 'src'}),
                 ]
@@ -40,3 +46,8 @@ uefa = ScrapeModel(
         ]
     )]
 )
+
+disp = Dispatcher()
+disp.add_scraper(uefa)
+disp.run()
+

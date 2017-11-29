@@ -1,66 +1,80 @@
-from modelscraper.components import ScrapeModel, Phase, Template, Attr, Source
-from modelscraper.parsers import JSONParser
+from dispatcher import Dispatcher
+from components import ScrapeModel, Phase, Template, Attr, Source
 from pymongo import MongoClient
+from workers import WebSource
+import datetime
+from parsers import HTMLParser
+
 
 cl = MongoClient()
+db = cl.volkskrant
+col = db.artikelen
 
-
-title_attr = Attr(name='title', selector='title', func='sel_text')
-text_attr = Attr(name='text', selector='body_elements', func='sel_dict')
-date_attr = Attr(name='date', selector='publish_date', func='sel_text')
-author_attr = Attr(name='author', selector='written_by', func='sel_text')
-tags_attr = Attr(name='tags', selector=('tags', 'name'), func='sel_text')
-category_attr = Attr(name='category', selector=('section', 'name'),
-                     func='sel_text')
-counters_attr = Attr(name='counters', selector='counters', func='sel_text')
-intro_attr = Attr(name='excerpt', selector='intro', func='sel_text')
-type_attr = Attr(name='excerpt', selector='type', func='sel_text')
-
-article = Template(
-    name='article',
-    db='volkskrant', table='articles',
-    db_type='mongo_db',
-    attrs=(
-        title_attr,
-        text_attr,
-        date_attr,
-        author_attr,
-        tags_attr,
-        category_attr,
-        counters_attr,
-        intro_attr,
-        type_attr
-    )
-)
-
-article_url = 'http://vkplusmobilebackend.persgroep.net/rest/content/articles/{}'
-search_url = 'http://vkplusmobilebackend.persgroep.net/rest/content/articles?query=&metadataNeeded=true&limit=10000'
-next_page_url = 'http://vkplusmobilebackend.persgroep.net/rest/content/articles?query=&metadataNeeded=true&limit=10000&offset={}'
-
-search_result = Template(
-    name='search_result', db='volkskrant', table='article_urls',
-    func='create',
-    db_type='mongo_db', selector=('results', 'previews'),
-    attrs=(
-        Attr(name='id', selector=('content_link', 'id'), func='sel_text',
-             source={'src_template': article_url, 'active': False}),
-    ),
-)
-
-next_search = Template(
-    name='next_result',
-    attrs=(
-        Attr(name='next_limit', selector=('results', 'next_offset'),
-             func='sel_text', source={'src_template': next_page_url}),
-    )
-)
-
-sources = (Source(url=search_url),)
+today = datetime.datetime.now().year
+print(today)
 
 volkskrant = ScrapeModel(
-    name='volkskrant', domain='volkskrant',
-    phases=[
-        Phase(parser=JSONParser, n_workers=5, sources=sources,
-            templates=(search_result, next_search)),
-        Phase(parser=JSONParser, n_workers=5, sources=sources, templates=(article,)),
-    ])
+    name='volkskrant', domain='http://www.volkskrant.nl/', num_getters=2,
+    cookies={'nl_cookiewall_version': '1'}, phases=[
+        Phase(source_worker=WebSource, parser=HTMLParser, sources=[
+            Source(url="http://www.volkskrant.nl/archief/{}".format(year))
+            for year in range(1987, today)],
+            templates=(
+                Template(
+                    name='day_url', selector='td', attrs=(
+                        Attr(name='url', selector='a', func='sel_url',
+                             source=Source(active=False)),
+                        )
+                    ),
+                )
+            ),
+        Phase(source_worker=WebSource, parser=HTMLParser,
+            templates=(
+                Template(
+                    name='article_url', selector='article',
+                    attrs=(
+                        Attr(name='url', selector='a', func='sel_url',
+                             source=Source(active=False)),
+                        )
+                    ),
+                Template(
+                    name='next_page_url', selector='a.pager',
+                    attrs=(
+                        Attr(name='url', selector='', func='sel_url',
+                             source=True),
+                        )
+                    ),
+                ),
+            ),
+        Phase(source_worker=WebSource, parser=HTMLParser,
+            templates=(
+                Template(
+                    name='article', selector='',
+                    db_type='mongo_db', db='volkskrant', table='articles',
+                    attrs=(
+                        Attr(name='url', selector='a', func='sel_url',
+                             source=Source(active=False)),
+                        Attr(name='title', selector='h1', func='sel_text'),
+                        Attr(name='subtitle', selector='h2', func='sel_text'),
+                        Attr(name='author', selector='span[itemprop="author"]',
+                             func='sel_text'),
+                        Attr(name='author',
+                             selector='time[itemprop="datePublished"]',
+                             func='sel_text'),
+                        Attr(name='category',
+                             selector='meta[property="article:section"]',
+                             func='sel_attr', kws={'attr': 'content'}),
+                        Attr(name='description',
+                             selector='p[itemprop="description"]',
+                             func='sel_text'),
+                        Attr(name='text', selector='.article__body__paragraph',
+                             func='sel_text'),
+                        )
+                    ),
+                )
+            ),
+])
+
+disp = Dispatcher()
+disp.add_scraper(volkskrant)
+disp.run()

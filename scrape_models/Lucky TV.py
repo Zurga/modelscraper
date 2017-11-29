@@ -1,7 +1,7 @@
 from modelscraper.dispatcher import Dispatcher
 from modelscraper.components import ScrapeModel, Phase, Template, Attr, Source
 from pymongo import MongoClient
-from modelscraper.workers import WebSource
+from modelscraper.sources import WebSource
 from modelscraper.parsers import HTMLParser
 
 
@@ -30,7 +30,3 @@ LuckyTV = ScrapeModel(name='Lucky TV', domain='http://www.luckytv.nl/',
         )
     ),
 ])
-
-disp = Dispatcher()
-disp.add_scraper(LuckyTV)
-disp.run()
