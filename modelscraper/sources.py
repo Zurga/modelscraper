@@ -39,7 +39,7 @@ class WebSource(BaseSourceWorker):
         self.mean = 0
         self.total_time = 0
         self.visited = 0
-        self.user_agent = self.parent.user_agent
+        self.user_agent = self.parent.model.user_agent
 
         self.connection_errors = []
 
