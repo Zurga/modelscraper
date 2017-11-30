@@ -22,8 +22,6 @@ class Dispatcher:
             scraper.join()
 
         print('scraper joined')
-        for store in self.store_threads:
-            store.join()
 
         for scraper in self.scrapers.values():
             while scraper.awaiting and scraper.source_q.empty():
@@ -35,14 +33,13 @@ class Dispatcher:
 
         self.store_q.put(None)
 
-    def add_scraper(self, models):
+    def add_scraper(self, models, dummy=False):
         if type(models) != list:
             models = [models]
 
-        db_threads = defaultdict(list)
-
         for model in models:
-            scraper = workers.ScrapeWorker(model)
+            print('dummy', dummy)
+            scraper = workers.ScrapeWorker(model, dummy=dummy)
             self.scrapers[scraper.name] = scraper
 
     def _check_functions(self, template, run):
