@@ -36,12 +36,12 @@ class BaseParser:
         if not parent:
             raise Exception('No parent or phase was specified')
         self.name = parent.name
-        self.domain = parent.domain
-        self.db = parent.db
+        self.domain = parent.model.domain
         # Set all selectors and the functions of the attrs to the correct
         # functions and selectors of the parser.
         self.templates = self._prepare_templates(templates)
         self.total_time = 0
+        self.parent = parent
 
         for key, value in kwargs.items():
             setattr(self, key, value)
