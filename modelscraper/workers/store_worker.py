@@ -1,13 +1,13 @@
-from multiprocessing import Process
+from multiprocessing import Process, JoinableQueue
 
 
 unsupported = 'The "{}" function is not supported by the {} adapter'
 
 
 class StoreWorker(Process):
-    def __init__(self, store_q=None, cache=10):
+    def __init__(self, cache=10):
         super(StoreWorker, self).__init__()
-        self.store_q = store_q
+        self.store_q = JoinableQueue()
         self.cache = cache
 
     def run(self):
