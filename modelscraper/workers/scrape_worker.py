@@ -1,21 +1,19 @@
 from collections import defaultdict
-from multiprocessing import Process, JoinableQueue
+from multiprocessing import Process
 from queue import Queue, Empty
-from concurrent.futures import ThreadPoolExecutor
 import os
-import time
 
-from pybloom import ScalableBloomFilter, BloomFilter
+from pybloom import ScalableBloomFilter
 
 from .. import databases
 
 
 class ScrapeWorker(Process):
-    def __init__(self, model):
+    def __init__(self, model, dummy=False):
         super(ScrapeWorker, self).__init__()
 
         self.source_q = Queue()
-        self.parse_q = JoinableQueue()
+        self.parse_q = Queue()
         self.seen = ScalableBloomFilter()
         self.forwarded = ScalableBloomFilter()
         self.new_sources = []
@@ -28,20 +26,23 @@ class ScrapeWorker(Process):
         self.schedule = model.schedule
         self.model = model
 
-        for attr in model.__dict__.keys():
-            setattr(self, attr, getattr(model, attr))
-
         db_threads = defaultdict(list)
 
-        for phase in model.phases:
+        # Check if the functions in each template are used properly
+        # and store which types of databases are needed.
+        for phase in self.model.phases:
             for template in phase.templates:
+                self.check_functions(template, phase)
                 if template.db_type:
                     db_threads[template.db_type].append(template)
-                self.check_functions(template, phase)
 
+        # Start all the threads necessary for storing the data and give each
+        # template a reference to the thread it needs to store data in.
         for thread, templates in db_threads.items():
-            queue = JoinableQueue()
-            store_thread = databases._threads[thread](store_q=queue)
+            if not dummy:
+                store_thread = databases._threads[thread]()
+            else:
+                store_thread = databases._threads['dummy']()
 
             for template in templates:
                 self.dbs[template.name] = store_thread
@@ -50,10 +51,10 @@ class ScrapeWorker(Process):
     def run(self):
         # create the threads needed to scrape
         i = 0
-        while self.phases:
+        while self.model.phases:
             # if self.is_scheduled():
-            if i < len(self.phases):
-                phase = self.phases[i]
+            if i < len(self.model.phases):
+                phase = self.model.phases[i]
             else:
                 break
             print('running phase:', i, phase.name)
@@ -71,10 +72,8 @@ class ScrapeWorker(Process):
                 self.parse_sources()
 
             if phase.repeat:
-                self.phases.append(phase)
+                self.model.phases.append(phase)
                 print('Repeating phase:', phase.name)
-            # else:
-            #time.sleep(self.get_sleep_time())
         print('Phase:', i, 'stopped')
 
     def parse_sources(self):
