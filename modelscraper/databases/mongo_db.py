@@ -12,8 +12,8 @@ class MongoDB(StoreWorker):
     '''
     name = 'mongo_db'
 
-    def __init__(self, store_q=None):
-        super(MongoDB, self).__init__(store_q=store_q)
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
         # TODO add connection details
         self.client = MongoClient(connect=False)
 
