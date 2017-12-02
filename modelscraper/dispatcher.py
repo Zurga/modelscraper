@@ -23,11 +23,13 @@ class Dispatcher:
 
         print('scraper joined')
 
+        # TODO fix this part
+        """
         for scraper in self.scrapers.values():
             while scraper.awaiting and scraper.source_q.empty():
                 url = input('url: ')
                 scraper.add_source(url)
-
+        """
         # TODO fix that the seen urls go to the databases.
         print('joined')
 
