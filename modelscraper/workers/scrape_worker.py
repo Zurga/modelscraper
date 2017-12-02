@@ -1,5 +1,6 @@
 from collections import defaultdict
 from multiprocessing import Process
+from threading import Event
 from queue import Queue, Empty
 import os
 
@@ -25,6 +26,7 @@ class ScrapeWorker(Process):
         self.dbs = dict()
         self.schedule = model.schedule
         self.model = model
+        self.source_kill = None
 
         db_threads = defaultdict(list)
 
@@ -125,11 +127,17 @@ class ScrapeWorker(Process):
         else:
             n_workers = self.model.num_getters
 
-        if not self.workers:
-            for i in range(n_workers):
-                worker = phase.source_worker(parent=self, id=i)
-                worker.start()
-                self.workers.append(worker)
+        # Kill existing workers if there are any
+        if self.workers:
+            self.source_kill.set()
+
+        # Create new Event to be able to kill the source workers
+        self.source_kill = Event()
+        self.workers = [phase.source_worker(parent=self, id=i,
+                                       stop_event=self.source_kill)
+                   for i in range(n_workers)]
+        for worker in self.workers:
+            worker.start()
 
     def add_sources(self, phase):
         urls_in_db = []
