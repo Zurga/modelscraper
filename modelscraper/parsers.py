@@ -529,7 +529,7 @@ class JSONParser(BaseParser):
 
 class TextParser(BaseParser):
     def __init__(self, **kwargs):
-        super(TextParser, self).__init__(**kwargs)
+        super().__init__(**kwargs)
         for key, value in kwargs.items():
             setattr(self, key, value)
 
