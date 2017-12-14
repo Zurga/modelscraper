@@ -1,19 +1,15 @@
-from dispatcher import Dispatcher
-from components import ScrapeModel, Phase, Template, Attr, Source
+from modelscraper.dispatcher import Dispatcher
+from modelscraper.components import ScrapeModel, Phase, Template, Attr, Source
 from pymongo import MongoClient
-from workers import WebSource
-from parsers import HTMLParser
+from modelscraper.sources import WebSource
+from modelscraper.parsers import HTMLParser
 
 
-cl = MongoClient()
-db = cl.npo_tv_programs
-col = db.programma
-
+series_url = "https://www.npo.nl/media/series?page={}&dateFrom=2014-01-01&tilemapping=normal&tiletype=teaser&pageType=catalogue"
 npo_tv_programs = ScrapeModel(name='npo_tv_programs', domain='http://npo.nl',
     num_getters=2, phases=[
     Phase(source_worker=WebSource, parser=HTMLParser, sources=[
-        Source(url="http://www.npo.nl/programmas/a-z", params={'page': i})
-        for i in range(0, 242)],
+        Source(url=series_url.format(i)) for i in range(0, 242)],
         templates=(
             Template(
                 name='program', selector='.content-column.quarter',
