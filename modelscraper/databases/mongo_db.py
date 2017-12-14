@@ -1,6 +1,9 @@
-from pymongo import MongoClient, UpdateMany
 from datetime import datetime
 import time
+
+from pymongo import MongoClient, UpdateMany
+
+from .store_worker import StoreWorker
 
 
 class MongoDB(StoreWorker):
