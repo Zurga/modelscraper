@@ -20,7 +20,6 @@ available_models = [f[:-3] for f in os.listdir('scrape_models')
 @click.argument('model', nargs=-1)
 @click.option('--dummy', default=False, help='Whether to do a dummy run')
 def main(model, dummy):
-    print(dummy)
     if len(model) == 1:
         model = model[0]
     dispatcher = Dispatcher()
