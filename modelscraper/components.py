@@ -88,7 +88,8 @@ class Attr(BaseModel):
             for _ in range(difference):
                 self.kws.append({})
 
-@attr.s
+# @attr.s(repr=False)
+@attr.s(repr=False)
 class Template(BaseModel):
     db = attr.ib(default=None)
     table = attr.ib(default=None)
@@ -139,6 +140,14 @@ class Template(BaseModel):
         print('add_attr', attr.name)
         attr = Attr(name=name, value=value, **kwargs)
         self.attrs[attr.name] = attr
+
+    def __repr__(self):
+        if self.objects:
+            for objct in self.objects:
+                repr_string = "Template {}:\n".format(objct.name)
+                for attr in objct.attrs.values():
+                    repr_string += "\t{}: {}\n".format(attr.name, attr.value)
+        return repr_string
 
 class ScrapeModel:
     def __init__(self, name='', domain='', phases: Phase=[], num_getters=1,
