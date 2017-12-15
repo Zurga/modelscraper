@@ -1,5 +1,6 @@
 import re
 import json
+import csv
 from queue import Empty
 from functools import reduce
 from datetime import datetime
@@ -17,8 +18,10 @@ from .helpers import str_as_tuple
 # Decorator to copy docstrings from other functions
 def add_other_doc(other_func):
     def _doc(func):
-        if other_func.__doc__:
+        if other_func.__doc__ and func.__doc__:
             func.__doc__ = func.__doc__ + other_func.__doc__
+        else:
+            func.__doc__ = other_func.__doc__
         return func
     return _doc
 
@@ -134,7 +137,7 @@ class BaseParser:
                     continue
                 else:
                     print('Template', template.name, 'failed')
-                    print('data', data)
+                    print('data', data.text_content())
                     continue
 
             # Create a new Source from the template if desirable
@@ -228,7 +231,10 @@ class BaseParser:
                     for t in text if t and any(map(str.isdigit, t))]
         return text
 
-    def _sel_text(self, text, index, **kwargs):
+    def _sel_text(self, text, index=None, **kwargs):
+        '''
+        Selects and modifies text.
+        '''
         text = (t.lstrip().rstrip() for t in text if t)
         text = self.modify_text(text, **kwargs)
         return self._value(text, index)
@@ -363,8 +369,7 @@ class HTMLParser(BaseParser):
         return elements
 
     @add_other_doc(BaseParser.modify_text)
-    def sel_text(self, elements, all_text=True, index=None,
-                 **kwargs):  # noqa
+    def sel_text(self, elements, all_text=True, **kwargs):  # noqa
         '''
         Select all text for a given selector.
         '''
@@ -372,7 +377,7 @@ class HTMLParser(BaseParser):
             text = [el.text_content() for el in elements]
         else:
             text = [el.text for el in elements]
-        return self._sel_text(text, index, **kwargs)
+        return self._sel_text(text, **kwargs)
 
     def sel_table(self, elements, columns: int=2, offset: int=0):
         '''
@@ -407,7 +412,7 @@ class HTMLParser(BaseParser):
                         for row in rows]
         return self._value(selected, index)
 
-    def sel_attr(self, elements, attr: str='', index: int=None, **kwargs):
+    def sel_attr(self, elements, attr: str='', **kwargs):
         '''
         Extract an attribute of an HTML element. Will return
         a list of attributes if multiple tags match the
@@ -418,7 +423,7 @@ class HTMLParser(BaseParser):
         '''
 
         attrs = (el.attrib.get(attr) for el in elements)
-        return self._sel_text(attrs, index, **kwargs)
+        return self._sel_text(attrs, **kwargs)
 
     def sel_url(self, elements, index: int=None, **kwargs):
         return self.sel_attr(elements, attr='href', index=index, **kwargs)
@@ -516,12 +521,9 @@ class JSONParser(BaseParser):
     def _get_selector(self, model):
         return str_as_tuple(model.selector)
 
-    @add_other_doc(BaseParser.modify_text)
-    def sel_text(self, elements, index=None, debug=False, **kwargs):  # noqa
-        """
-        Selects the text from data.
-        """
-        return self._sel_text(elements, index, **kwargs)
+    @add_other_doc(BaseParser._sel_text)
+    def sel_text(self, elements, **kwargs):  # noqa
+        return self._sel_text(elements, **kwargs)
 
     def sel_dict(self, elements):
         return elements
@@ -547,9 +549,33 @@ class TextParser(BaseParser):
     def _get_selector(self, model):
         return str_as_tuple(model.selector)
 
-    @add_other_doc(BaseParser.modify_text)
+    @add_other_doc(BaseParser._sel_text)
     def sel_text(self, elements, **kwargs):
         """
         Selects the text from data.
         """
         return elements
+
+class CSVParser(BaseParser):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        for key, value in kwargs.items():
+            setattr(self, key, value)
+
+    def _prepare_data(self, source):
+        return source.data
+
+    def _extract(self, data, template):
+        return [d.split(',') for d in data.split('\n') if d]
+
+    def _apply_selector(self, selector, data):
+        if selector:
+            return [data[selector[0]]]
+        return data
+
+    def _get_selector(self, model):
+        return model.selector
+
+    @add_other_doc(BaseParser._sel_text)
+    def sel_text(self, elements, **kwargs):
+        return self._sel_text(elements, **kwargs)
