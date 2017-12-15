@@ -27,6 +27,7 @@ class ScrapeWorker(Process):
         self.schedule = model.schedule
         self.model = model
         self.source_kill = None
+        self.dummy = dummy
 
         db_threads = defaultdict(list)
 
@@ -237,7 +238,8 @@ class ScrapeWorker(Process):
             self.source_q.task_done()
 
     def show_progress(self):
-        os.system('clear')
+        if not self.dummy:
+            os.system('clear')
         info = '''
         Domain              {}
         Sources to get:     {}
