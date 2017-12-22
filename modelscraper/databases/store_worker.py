@@ -37,17 +37,13 @@ class StoreWorker(Process):
         Writes a list of objects to the database specified in the template.
         This wraps around functions of the database wrappers.
         '''
-        assert getattr(self, '_create', None), \
-            unsupported.format("create", self.__name__)
-        return self._create(objects, *args, **kwargs)
+        raise NotImplementedError
 
     def read(self, *args, **kwargs):
         '''
         Read an entry from the database.
         '''
-        assert getattr(self, '_read', None), \
-            unsupported.format("read", self.__name__)
-        return self._read(*args, **kwargs)
+        raise NotImplementedError
 
     def update(self, *args, **kwargs):
         '''
@@ -55,15 +51,11 @@ class StoreWorker(Process):
         If no key is specified, the url of object is used.
         By default creates an object in the database, if none exists.
         '''
-        assert getattr(self, '_update', None), \
-            unsupported.format("update", self.__name__)
-        return self._update(*args, **kwargs)
+        raise NotImplementedError
 
     def delete(self, *args, **kwargs):
         '''
         Deletes an entry from the database.
         Not implemented yet in any of the DatabaseAdapters.
         '''
-        assert getattr(self, '_delete', None), \
-            unsupported.format("delete", self.__name__)
-        return self._delete(*args, **kwargs)
+        raise NotImplementedError
