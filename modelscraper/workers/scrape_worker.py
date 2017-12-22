@@ -72,6 +72,11 @@ class ScrapeWorker(Process):
 
             if not phase.repeat:
                 i += 1
+        for db in self.dbs.values():
+            db.store_q.put(None)
+        for db in self.dbs.values():
+            db.store_q.join()
+        print('Waiting for the database')
         print('Scraper fully stopped')
 
     def parse_sources(self):
