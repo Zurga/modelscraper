@@ -70,7 +70,7 @@ class WebSource(BaseSourceWorker):
             # print(id(self), '{}'.format(source.url), page, source.method, source.data)
 
             if page and source.parse:
-                source.data = page.text
+                source.data = page.content
                 return source
             else:
                 print(source.url)
