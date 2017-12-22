@@ -48,6 +48,8 @@ class Source(BaseModel):
     attr_condition = attr.ib('')
     parent = attr.ib(False)
     from_db = attr.ib(None, metadata={'Template': 1})
+    templates = attr.ib(attr.Factory(list))
+    compression = attr.ib('')
 
 
 def source_conv(source):
@@ -68,7 +70,7 @@ class Attr(BaseModel):
     name = attr.ib(default=None)
     value = attr.ib(default=None, convert=str_as_tuple)
     func = attr.ib(default=tuple, convert=str_as_tuple,
-                   metadata={Phase.parser: 1})
+                   metadata={'Phase.parser': 1})
     attr_condition = attr.ib(default={})
     source_condition = attr.ib(default={})
     source = attr.ib(default=None, convert=source_conv,
@@ -88,7 +90,7 @@ class Attr(BaseModel):
             for _ in range(difference):
                 self.kws.append({})
 
-# @attr.s(repr=False)
+
 @attr.s(repr=False)
 class Template(BaseModel):
     db = attr.ib(default=None)
