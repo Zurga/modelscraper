@@ -15,6 +15,8 @@ class StoreWorker(Process):
             template = self.store_q.get()
 
             if template is None:
+                print('Store received None')
+                self.store_q.task_done()
                 break
 
             # Set up the environment before storing the objects.
@@ -30,6 +32,7 @@ class StoreWorker(Process):
                         print('Failed with template', template.name)
                         print(template)
             '''
+            self.store_q.task_done()
         print('stopping store')
 
     def create(self, objects, *args, **kwargs):
