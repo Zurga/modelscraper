@@ -74,3 +74,14 @@ def attr_dict(attrs):
     for attr_item in attrs:
         attrs_dict[attr_item.name] = attr_item
     return attrs_dict
+
+
+# Decorator to copy docstrings from other functions
+def add_other_doc(other_func):
+    def _doc(func):
+        if other_func.__doc__ and func.__doc__:
+            func.__doc__ = func.__doc__ + other_func.__doc__
+        else:
+            func.__doc__ = other_func.__doc__
+        return func
+    return _doc
