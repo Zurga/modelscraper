@@ -54,14 +54,10 @@ class ScrapeWorker(Process):
     def run(self):
         # create the threads needed to scrape
         i = 0
-        while self.model.phases:
+        while i < len(self.model.phases):
             # if self.is_scheduled():
-            if i < len(self.model.phases):
-                phase = self.model.phases[i]
-            else:
-                break
+            phase = self.model.phases[i]
             print('running phase:', i, phase.name)
-            i += 1
 
             # Check if the phase has a parser, if not, reuse the one from the
             # last phase.
@@ -74,10 +70,9 @@ class ScrapeWorker(Process):
                 self.to_forward = []
                 self.parse_sources()
 
-            if phase.repeat:
-                self.model.phases.append(phase)
-                print('Repeating phase:', phase.name)
-        print('Phase:', i, 'stopped')
+            if not phase.repeat:
+                i += 1
+        print('Scraper fully stopped')
 
     def parse_sources(self):
         while True:
@@ -110,7 +105,6 @@ class ScrapeWorker(Process):
                 self.new_sources = []
                 self.show_progress()
 
-        print('parser_joined')
         print('Unparsed ', self.source_q.qsize())
 
     def spawn_workforce(self, phase):
