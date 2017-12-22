@@ -2,8 +2,10 @@ from datetime import datetime
 import time
 
 from pymongo import MongoClient, UpdateMany
+from pymongo.collection import Collection
 
 from .store_worker import StoreWorker
+from ..helpers import add_other_doc
 
 
 class MongoDB(StoreWorker):
@@ -32,13 +34,15 @@ class MongoDB(StoreWorker):
             print('No objects in', template.name)
         return False
 
-    def _create(self, objects, *args, **kwargs):
+    @add_other_doc(Collection.insert_many)
+    def create(self, objects, *args, **kwargs):
         # TODO link from the StoreWorker documentation
         # TODO link to the pymongo documentation
         return self.coll.insert_many([obj.to_dict() for obj in objects],
                                      *args, **kwargs)
 
-    def _update(self, objects, key='', method='$set', upsert=True,
+    @add_other_doc(Collection.bulk_write)
+    def update(self, objects, key='', method='$set', upsert=True,
                 date=False):
         # TODO link from the StoreWorker documentation
         # TODO add pymongo documentation link.
@@ -56,7 +60,8 @@ class MongoDB(StoreWorker):
             return self.coll.bulk_write(db_requests)
         return False
 
-    def _read(self, template=None, url='', **kwargs):
+    @add_other_doc(Collection.find)
+    def read(self, template=None, url='', **kwargs):
         self.db = self.client[template.db]
         self.coll = self.db[template.table]
         if url:
