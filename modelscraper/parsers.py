@@ -1,29 +1,23 @@
-import re
-import json
-import csv
-from queue import Empty
-from functools import reduce
+from io import BytesIO
 from datetime import datetime
+from functools import reduce
+from queue import Empty
 from types import FunctionType
+from zipfile import ZipFile
+import csv
+import gzip
+import json
+import re
 import time
+import sys
 
 import lxml.html as lxhtml
 from lxml.etree import XPath
 from lxml.cssselect import CSSSelector, SelectorSyntaxError
 from scrapely import Scraper
 
-from .helpers import str_as_tuple
-
-
-# Decorator to copy docstrings from other functions
-def add_other_doc(other_func):
-    def _doc(func):
-        if other_func.__doc__ and func.__doc__:
-            func.__doc__ = func.__doc__ + other_func.__doc__
-        else:
-            func.__doc__ = other_func.__doc__
-        return func
-    return _doc
+from .helpers import str_as_tuple, add_other_doc
+sys.setrecursionlimit(10000000)
 
 
 class BaseParser:
@@ -62,10 +56,26 @@ class BaseParser:
         raise NotImplementedError
 
     def parse(self, source):
+        '''
+        Generator that parses a source based on a template.
+        If the source has a template, the data in the source is parsed
+        according to that template.
+        '''
         start = time.time()
+
+        if source.compression == 'zip':
+            source.data = self._read_zip_file(source.data)
+        elif source.compression == 'gzip':
+            source.data = self._read_gzip_file(source.data)
+
         data = self._prepare_data(source)
 
-        for template in self.templates:
+        if source.templates:
+            templates = source.templates
+        else:
+            templates = self.templates
+
+        for template in templates:
             extracted = self._extract(data, template)
             template.objects = list(
                 self._gen_objects(template, extracted, source))
@@ -78,6 +88,7 @@ class BaseParser:
                 self.parent.reset_source_queue()
 
             yield template.to_store()
+
         self.total_time += time.time() - start
 
     def _prepare_templates(self, templates):
@@ -235,9 +246,27 @@ class BaseParser:
         '''
         Selects and modifies text.
         '''
-        text = (t.lstrip().rstrip() for t in text if t)
-        text = self.modify_text(text, **kwargs)
-        return self._value(text, index)
+        try:
+            stripped = (t.lstrip().rstrip() for t in text if t)
+            text = self.modify_text(stripped, **kwargs)
+            return self._value(text, index)
+        except Exception as e:
+            print(e)
+            print(text)
+            sys.exit()
+
+    def _read_zip_file(self, zipfile):
+        content = ''
+        with ZipFile(BytesIO(zipfile)) as myzip:
+            for file_ in myzip.namelist():
+                with myzip.open(file_) as fle:
+                    content += fle.read().decode('utf8')
+        return content
+
+    def _read_gzip_file(self, gzfile):
+        with gzip.open(BytesIO(gzfile)) as fle:
+            return fle.read()
+
 
 class HTMLParser(BaseParser):
     '''
@@ -251,7 +280,7 @@ class HTMLParser(BaseParser):
 
     def _prepare_data(self, source):
         json_key = source.json_key
-        data = source.data
+        data = source.data.decode('utf8')
         if json_key: # if the data is json, return it straightaway
             json_raw = json.loads(data)
             if hasattr(json_key, '__iter__') and json_key[0] in json_raw:
@@ -481,10 +510,20 @@ class JSONParser(BaseParser):
         for key, value in kwargs.items():
             setattr(self, key, value)
 
+    def _flatten(self, lis):
+        new_list = []
+        for item in lis:
+            if type(item) == list:
+                new_list.extend(self._flatten(item))
+            else:
+                new_list.append(item)
+        return new_list
+
     def _prepare_data(self, source):
         data = json.loads(source.data)
         if source.json_key:
             data = reduce(dict.get, source.json_key, data)
+        print(len(data))
         return data
 
     def _extract(self, data, template):
@@ -497,8 +536,29 @@ class JSONParser(BaseParser):
             return data
 
     def _apply_selector(self, selector, data):
+        while selector and data:
+            cur_sel = selector[0]
+            if type(data) == dict:
+                if cur_sel in data:
+                    data = data[cur_sel]
+                else:
+                    data = None
+            elif type(data) == list:
+                if type(cur_sel) == int:
+                    data = data[cur_sel]
+                else:
+                    data = self._flatten(data)
+                    data = [d.get(cur_sel, []) for d in data
+                            if type(d) == dict]
+            selector = selector[1:]
+        if type(data) != list:
+            return [data]
+        return data
+
+    def _old_apply_selector(self, selector, data):
         if selector:
             if len(selector) == 0:
+                print('found', data)
                 if type(data) != list:
                     return [data]
                 return data
@@ -507,13 +567,16 @@ class JSONParser(BaseParser):
                     return self._apply_selector(selector[1:], data[selector[0]])
                 else:
                     return []
-            if type(data) == list:
-                data = [d.get(selector[0]) for d in data]
-                if all(data):
+            if data and type(data) == list:
+                if all(type(d)==dict for d in data):
+                    data = [d.get(selector[0]) for d in data]
+                    print(data)
                     return self._apply_selector(selector[1:], data)
                 else:
-                    return []
+                    data = [d for d in data]
+                    return self._apply_selector(selector, data)
         else:
+            print('found else', data)
             if type(data) != list:
                 return [data]
             return data
@@ -555,6 +618,7 @@ class TextParser(BaseParser):
         Selects the text from data.
         """
         return elements
+
 
 class CSVParser(BaseParser):
     def __init__(self, **kwargs):
