@@ -1,14 +1,10 @@
-from io import BytesIO
 from datetime import datetime
 from functools import reduce
 from queue import Empty
 from types import FunctionType
-from zipfile import ZipFile
 import csv
-import gzip
 import json
 import re
-import time
 import sys
 
 import lxml.html as lxhtml
@@ -33,17 +29,17 @@ class BaseParser:
         if not parent:
             raise Exception('No parent or phase was specified')
         self.name = parent.name
-        self.domain = parent.model.domain
+        self.domain = parent.domain
         # Set all selectors and the functions of the attrs to the correct
         # functions and selectors of the parser.
-        self.templates = self._prepare_templates(templates)
-        self.total_time = 0
+        #self.templates = self._prepare_templates(templates)
+        self._prepare_templates(templates)
         self.parent = parent
 
         for key, value in kwargs.items():
             setattr(self, key, value)
 
-    def _prepare_data(self, source):
+    def _convert_data(self, source):
         raise NotImplementedError
 
     def _extract(self, data, template):
@@ -55,57 +51,49 @@ class BaseParser:
     def _get_selector(self, model):
         raise NotImplementedError
 
-    def parse(self, source):
+    def parse(self, source, template, selector=None, gen_objects=True):
         '''
         Generator that parses a source based on a template.
         If the source has a template, the data in the source is parsed
         according to that template.
         '''
-        start = time.time()
 
-        if source.compression == 'zip':
-            source.data = self._read_zip_file(source.data)
-        elif source.compression == 'gzip':
-            source.data = self._read_gzip_file(source.data)
+        data = self._convert_data(source.data)
 
-        data = self._prepare_data(source)
+        # if source.templates:
+        #    templates = source.templates
+        # else:
+        #    templates = self.templates
 
-        if source.templates:
-            templates = source.templates
-        else:
-            templates = self.templates
+        # for template in templates:
+        extracted = self._extract(data, selector)
+        if not gen_objects:
+            return self.to_string(extracted)
 
-        for template in templates:
-            extracted = self._extract(data, template)
-            template.objects = list(
-                self._gen_objects(template, extracted, source))
+        objects = list(self._gen_objects(template, extracted, source))
 
-            if template.preview:
-                print(template.objects)
+        if not template.objects and template.required:
+            print(template.selector, 'yielded nothing, quitting.')
+            self.parent.reset_source_queue()
 
-            if not template.objects and template.required:
-                print(template.selector, 'yielded nothing, quitting.')
-                self.parent.reset_source_queue()
-
-            yield template.to_store()
-
-        self.total_time += time.time() - start
+        return objects # .to_store()
 
     def _prepare_templates(self, templates):
         for template in templates:
-            template.selector = self._get_selector(template)
+            # template.selector = [self._get_selector(template)]
             for attr in template.attrs.values():
                 attr.func = self._get_funcs(attr.func)
-                attr.selector = self._get_selector(attr)
+                attr.selector = self._get_selector(attr.selector)
 
     def _get_funcs(self, func_names):
         functions = []
         try:
-            for f in func_names:
-                if type(f) != str:
-                    functions.append(f)
-                else:
-                    functions.append(getattr(self, f))
+            if func_names:
+                for f in func_names:
+                    if type(f) != str:
+                        functions.append(f)
+                    else:
+                        functions.append(getattr(self, f))
             return functions
         except:
             print(f)
@@ -161,21 +149,24 @@ class BaseParser:
 
     def _gen_attrs(self, attrs, objct, data):
         for attr in attrs:
-            elements = self._apply_selector(attr.selector, data)
+            if not attr.func:
+                new_attr = attr()
+            else:
+                elements = self._apply_selector(attr.selector, data)
 
-            # get the parse functions and recursively apply them.
-            parsed = self._apply_funcs(elements, attr.func, attr.kws)
+                # get the parse functions and recursively apply them.
+                parsed = self._apply_funcs(elements, attr.func, attr.kws)
 
-            if attr.type and type(parsed) != attr.type:
-                print('Not the same type')
+                if attr.type and type(parsed) != attr.type:
+                    print('Not the same type')
 
-            new_attr = attr._replicate(name=attr.name, value=parsed, func='',
-                            selector=None, source=attr.source)
+                new_attr = attr._replicate(name=attr.name, value=parsed,
+                                           source=attr.source)
 
-            # Create a request from the attribute if desirable
-            # TODO add the source to the attr straightaway.
-            if attr.source and parsed:
-                self.parent.new_sources.append((objct, new_attr))
+                # Create a request from the attribute if desirable
+                # TODO add the source to the attr straightaway.
+                if attr.source and parsed:
+                    self.parent.new_sources.append((objct, new_attr))
 
             yield new_attr
 
@@ -234,8 +225,8 @@ class BaseParser:
             text = (f for t in text for f in regex.findall(t))
 
         if needle:
-            if not all([re.match(needle, t) in t for t in text]):
-                return None
+            if not all([re.match(re.escape(needle), t) for t in text]):
+                return [None]
 
         if numbers:
             text = [int(''.join([c for c in t if c.isdigit() and c]))
@@ -246,26 +237,9 @@ class BaseParser:
         '''
         Selects and modifies text.
         '''
-        try:
-            stripped = (t.lstrip().rstrip() for t in text if t)
-            text = self.modify_text(stripped, **kwargs)
-            return self._value(text, index)
-        except Exception as e:
-            print(e)
-            print(text)
-            sys.exit()
-
-    def _read_zip_file(self, zipfile):
-        content = ''
-        with ZipFile(BytesIO(zipfile)) as myzip:
-            for file_ in myzip.namelist():
-                with myzip.open(file_) as fle:
-                    content += fle.read().decode('utf8')
-        return content
-
-    def _read_gzip_file(self, gzfile):
-        with gzip.open(BytesIO(gzfile)) as fle:
-            return fle.read()
+        stripped = (t.lstrip().rstrip() for t in text if t)
+        text = self.modify_text(stripped, **kwargs)
+        return self._value(text, index)
 
 
 class HTMLParser(BaseParser):
@@ -278,17 +252,7 @@ class HTMLParser(BaseParser):
         for key, value in kwargs.items():
             setattr(self, key, value)
 
-    def _prepare_data(self, source):
-        json_key = source.json_key
-        data = source.data.decode('utf8')
-        if json_key: # if the data is json, return it straightaway
-            json_raw = json.loads(data)
-            if hasattr(json_key, '__iter__') and json_key[0] in json_raw:
-                data = reduce(dict.get, json_key, json_raw)
-            elif type(json_key) == str and json_key in json_raw:
-                data = json_raw[json_key]
-            else:
-                return False
+    def _convert_data(self, data):
         try:  # Create an HTML object from the returned text.
             data = lxhtml.fromstring(data)
         except ValueError:  # This happens when xml is declared in html.
@@ -299,19 +263,20 @@ class HTMLParser(BaseParser):
         data.make_links_absolute(self.domain)
         return data
 
-    def _get_selector(self, model):
+    def _get_selector(self, selector):
         # assert len(model.selector) == 1, "Only one selector can be used."
-        if model.selector:
-            if type(model.selector) in (CSSSelector, XPath):
-                return model.selector
+        if selector:
+            if type(selector) in (CSSSelector, XPath):
+                return selector
             else:
+                selector = ' '.join(selector).strip()
                 try:
-                    return CSSSelector(model.selector[0])
+                    return CSSSelector(selector)
                 except SelectorSyntaxError:
-                    return XPath(model.selector[0])
+                    return XPath(selector)
                 except:
                     raise Exception('Not a valid css or xpath selector',
-                                    model.selector)
+                                    selector)
         return None
 
     def _apply_selector(self, selector, data):
@@ -320,14 +285,15 @@ class HTMLParser(BaseParser):
         else:
             return (data,)
 
-    def _extract(self, html, template):
+    def _extract(self, html, selector):
         # We have normal html
-        if not template.js_regex:
-            if html is not None:
-                extracted = self._apply_selector(template.selector, html)
-            else:
-                extracted = []
+        # if not template.js_regex:
+        if html is not None:
+            extracted = self._apply_selector(selector, html)
+        else:
+            extracted = []
         # We want to extract a json_variable from the server
+        '''
         else:
             regex = re.compile(template.js_regex)
             extracted = []
@@ -339,7 +305,11 @@ class HTMLParser(BaseParser):
             # Set selected to the scripts
             for script in scripts:
                 extracted.extend(json.loads(script))
+        '''
         return extracted
+
+    def to_string(self, data):
+        return ''.join(data.to_string())
 
     def _source_from_object(self, objct, source):
         # TODO fix that the source object can determine for itself where data
@@ -519,25 +489,26 @@ class JSONParser(BaseParser):
                 new_list.append(item)
         return new_list
 
-    def _prepare_data(self, source):
-        data = json.loads(source.data)
-        if source.json_key:
-            data = reduce(dict.get, source.json_key, data)
-        print(len(data))
-        return data
+    def _convert_data(self, data):
+        return json.loads(data)
 
-    def _extract(self, data, template):
+    def _extract(self, data, selector):
         # TODO add the possibility to parse lists
-        if template.selector:
-            return self._apply_selector(template.selector, data)
+        if selector:
+            return self._apply_selector(selector, data)
         else:
             if type(data) != list:
                 return [data]
             return data
 
+    def to_string(self, data):
+        print(data)
+        return ''.join(data).encode('utf8')
+
     def _apply_selector(self, selector, data):
         while selector and data:
             cur_sel = selector[0]
+            print(data)
             if type(data) == dict:
                 if cur_sel in data:
                     data = data[cur_sel]
@@ -581,8 +552,8 @@ class JSONParser(BaseParser):
                 return [data]
             return data
 
-    def _get_selector(self, model):
-        return str_as_tuple(model.selector)
+    def _get_selector(self, selector):
+        return str_as_tuple(selector)
 
     @add_other_doc(BaseParser._sel_text)
     def sel_text(self, elements, **kwargs):  # noqa
@@ -598,8 +569,8 @@ class TextParser(BaseParser):
         for key, value in kwargs.items():
             setattr(self, key, value)
 
-    def _prepare_data(self, source):
-        return source.data
+    def _convert_data(self, data):
+        return data
 
     def _extract(self, data, template):
         return str_as_tuple(data)
@@ -609,15 +580,15 @@ class TextParser(BaseParser):
             return data.split(selector)
         return data
 
-    def _get_selector(self, model):
-        return str_as_tuple(model.selector)
+    def _get_selector(self, selector):
+        return str_as_tuple(selector)
 
     @add_other_doc(BaseParser._sel_text)
     def sel_text(self, elements, **kwargs):
         """
         Selects the text from data.
         """
-        return elements
+        return self._sel_text(elements, **kwargs)
 
 
 class CSVParser(BaseParser):
@@ -626,8 +597,8 @@ class CSVParser(BaseParser):
         for key, value in kwargs.items():
             setattr(self, key, value)
 
-    def _prepare_data(self, source):
-        return source.data
+    def _convert_data(self, data):
+        return data
 
     def _extract(self, data, template):
         return [d.split(',') for d in data.split('\n') if d]
@@ -637,8 +608,8 @@ class CSVParser(BaseParser):
             return [data[selector[0]]]
         return data
 
-    def _get_selector(self, model):
-        return model.selector
+    def _get_selector(self, selector):
+        return selector
 
     @add_other_doc(BaseParser._sel_text)
     def sel_text(self, elements, **kwargs):
