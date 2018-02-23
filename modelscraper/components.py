@@ -1,3 +1,4 @@
+from collections import defaultdict
 from itertools import zip_longest
 
 import requests
@@ -8,7 +9,7 @@ from .sources import WebSource
 from .parsers import HTMLParser
 from .workers.store_worker import StoreWorker
 from .helpers import selector_converter, attr_dict, str_as_tuple, wrap_list
-from . import databases
+from . import databases_new as databases
 
 
 @attr.s
@@ -32,6 +33,11 @@ class Phase:
     templates = attr.ib(default=attr.Factory(list))
     parser = attr.ib(default=HTMLParser)
 
+    def __attrs_post_init__(self):
+        for template in self.templates:
+            if not template.parser:
+                template.parser = (self.parser,)
+
 @attr.s
 class Source(BaseModel):
     url = attr.ib('')
@@ -44,7 +50,6 @@ class Source(BaseModel):
     params = attr.ib(attr.Factory(dict))
     src_template = attr.ib('{}')
     retries = attr.ib(10)
-    json_key = attr.ib(None, convert=str_as_tuple)
     duplicate = attr.ib(False)
     copy_attrs = attr.ib(None, convert=str_as_tuple)
     attr_condition = attr.ib('')
@@ -79,7 +84,6 @@ class Attr(BaseModel):
                      metadata={'Source': 1})
     kws = attr.ib(default=attr.Factory(dict))
     type = attr.ib(default=None)
-    value_template = attr.ib(default=None)
 
     def __attrs_post_init__(self):
         # Ensure that the kws are encapsulated in a list with the same length
@@ -99,12 +103,11 @@ class Attr(BaseModel):
         return self.__class__(**{**self.__dict__, **kwargs})  # noqa
 
 
-@attr.s(repr=False)
+@attr.s()
 class Template(BaseModel):
     db = attr.ib(default=None)
     table = attr.ib(default=None)
     db_type = attr.ib(default=None)
-    js_regex = attr.ib(default=None)
     objects = attr.ib(init=False)
     source = attr.ib(default=None, convert=source_conv)
     func = attr.ib(default='create', metadata={StoreWorker: 1})
@@ -116,7 +119,7 @@ class Template(BaseModel):
     args = attr.ib(default=tuple)
     attrs = attr.ib(default=attr.Factory(dict), convert=attr_dict)
     url = attr.ib(default='')
-    preview = attr.ib(default=False)
+    parser = attr.ib(default=False, convert=wrap_list)
 
     def __attrs_post_init__(self):
         if self.db and not self.table:
@@ -130,25 +133,33 @@ class Template(BaseModel):
         return {'url': self.url, **self.attrs_to_dict()} # noqa
 
     def attrs_to_dict(self):
-        return {attr.name: attr.value for attr in self.attrs}
+        return {a.name: a.value for a in self.attrs}
 
     def to_store(self):
         replica = self.__class__(db=self.db, table=self.table, func=self.func,
                                  db_type=self.db_type, kws=self.kws,
                                  name=self.name, url=self.url)
-        replica.objects = self.objects[:]
+        if self.objects:
+            replica.objects = self.objects[:]
         return replica
 
-    def attrs_from_dict(self, attr_dict):
-        self.attrs = {name: Attr(name=name, value=value) for
-                      name, value in attr_dict.items()}
-        print(self.attrs)
+    '''
+    def __getstate__(self):
+        state = self.__dict__.copy()
+        for attr in ['attrs', 'selector', 'source', 'required', 'partial', 'args']:
+            del state[attr]
+        return state
+    '''
+
+    def attrs_from_dict(self, attrs):
+        self.attrs = attr_dict((Attr(name=name, value=value) for
+                      name, value in attrs.items()))
 
     def add_attr(self, attr):
-        print('add_attr', attr.name)
         attr = Attr(name=name, value=value, **kwargs)
         self.attrs[attr.name] = attr
 
+    '''
     def __repr__(self):
         repr_string = self.name
         if self.objects:
@@ -157,11 +168,13 @@ class Template(BaseModel):
                 for attr in objct.attrs:
                     repr_string += "\t{}: {}\n".format(attr.name, attr.value)
         return repr_string
+    '''
 
 class ScrapeModel:
     def __init__(self, name='', domain='', phases: Phase=[], num_getters=1,
                  time_out=1, user_agent=None, session=requests.Session(),
-                 awaiting=False, cookies={}, schedule='', **kwargs):
+                 awaiting=False, cookies={}, schedule='',
+                 dummy=False, **kwargs):
         self.name = name
         self.domain = domain
         self.phases = phases
@@ -171,6 +184,9 @@ class ScrapeModel:
         self.awaiting = awaiting
         self.user_agent = user_agent
         self.schedule = schedule
+        self.dbs = dict()
+        self.new_sources = []
+        self._dummy = dummy
 
         if cookies:
             print(cookies)
@@ -178,6 +194,67 @@ class ScrapeModel:
 
         for key, value in kwargs.items():
             setattr(self, key, value)
+        self.db_threads, parsers = self.prepare_phases()
+        self.set_db_threads(self.db_threads)
+
+        self.parsers = {parser: parser(parent=self) for parser in parsers}
+
+        for phase in self.phases:
+            for template in phase.templates:
+                template.parser = [self.parsers[p] for p in template.parser]
+                # TODO Fix the right selector with the right parser.
+                if template.selector:
+                    template.selector = [parser._get_selector([selector])
+                                        for parser, selector in
+                                        zip(template.parser, template.selector)]
+            template.parser[-1]._prepare_templates(phase.templates)
+
+    def set_db_threads(self, db_threads):
+        for thread, templates in db_threads.items():
+            store_thread = getattr(databases, thread)()
+
+            for template in templates:
+                self.dbs[id(template)] = store_thread
+
+    @property
+    def dummy(self):
+        return self._dummy
+
+    @dummy.setter
+    def dummy(self, dummy):
+        self._dummy = dummy
+        self.set_db_threads({'Dummy':templates for templates in
+                           self.db_threads.values()})
+
+    def prepare_phases(self):
+        '''
+        Check if the functions in each template are used properly
+        and return which types of databases are needed.
+        '''
+        db_threads = defaultdict(list)
+        parsers = set()
+        for phase in self.phases:
+            for template in phase.templates:
+                self.check_functions(template, phase)
+                for parser in template.parser:
+                    parsers.add(parser)
+                if template.db_type:
+                    db_threads[template.db_type].append(template)
+        return db_threads, parsers
+
+    def check_functions(self, template, phase):
+        error_string = "One of these functions: {} is not implemented in {}."
+        not_implemented = []
+
+        for attr in template.attrs:
+            if attr.func:
+                for func in attr.func:
+                    if not getattr(phase.parser, func, False):
+                        not_implemented.append(func)
+
+        if not_implemented:
+            raise Exception(error_string.format(str(not_implemented),
+                                                phase.parser.__class__.__name__))
 
     def get_template(self, key):
         for phase in self.phases:
@@ -185,10 +262,10 @@ class ScrapeModel:
                 if template.name == key:
                     return template
 
-    def read_template(self, template_name='', as_object=False):
+    def read_template(self, template_name='', as_object=False, *args):
         template = self.get_template(template_name)
-        database = databases._threads[template.db_type]()
-        return database.read(template=template)
+        database = getattr(databases, template.db_type)()
+        return database.read(*args, template=template)
 
     def __repr__(self):
         repr_string = self.name + ':\n'
