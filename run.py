@@ -1,4 +1,4 @@
-#!/usr/bin/python
+#!/usr/bin/python3
 
 import importlib
 import os
@@ -28,10 +28,14 @@ def main(model, dummy):
         print('These models are available:')
         pprint.pprint(available_models, compact=True)
         return
-    imported = vars(importlib.import_module(f'scrape_models.{model}')).values()
+    imported = vars(importlib.import_module('scrape_models.%s' % model)).values()
     scrape_models = [model for model in imported
                      if type(model) == ScrapeModel]
-    dispatcher.add_scraper(scrape_models, dummy=dummy)
+    if dummy:
+        for model in scrape_models:
+            print('model dummy', model.dummy)
+            model.dummy = True
+    dispatcher.add_scraper(scrape_models)
     dispatcher.run()
 
 if __name__ == '__main__':
