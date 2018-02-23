@@ -62,30 +62,20 @@ class WebSource(BaseSourceWorker):
                     if not self.user_agent else self.user_agent}
 
         try:
+            time.sleep(self.time_out)
             func = getattr(self.session, source.method)
             page = func(source.url, data=source.data,
                         params=source.params,
                         headers={**headers, # noqa
                                     **source.headers})
-            # print(id(self), '{}'.format(source.url), page, source.method, source.data)
-
-            if page and source.parse:
-                source.data = page.content
-                return source
-            else:
-                print(source.url)
-                print(page)
-                print('No parsing required')
-
-            time.sleep(self.time_out)
         # Retry later with a timeout,
         except requests.Timeout:
-            print('timeout')
+            # print('timeout')
             self.in_q.put(source)
 
         # Retry later with connection error.
         except requests.ConnectionError:
-            print('connection error')
+            # print('connection error')
             self.in_q.put(source)
 
             time.sleep(self.time_out)
@@ -93,18 +83,23 @@ class WebSource(BaseSourceWorker):
         except Exception as E:
             print(E)
             self.to_parse -= 1
+        else:
+            if page and source.parse:
+                source.data = page.text
+                return source
+            else:
+                self.to_parse -= 1
+
 
 #TODO fix the FileWorker class to the new spec.
-class FileWorker(Thread):
+class FileSource(BaseSourceWorker):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self.in_q = in_q
-        self.out_q = out_q
 
     def retrieve(self, source):
-        with open(template.url) as fle:
-            lines = fle.readlines()
-        return lines
+        with open(source.url) as fle:
+            source.data = fle.read()
+        return source
 
 
 class ProgramSource(BaseSourceWorker):
