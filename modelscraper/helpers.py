@@ -67,10 +67,20 @@ def str_as_tuple(something):
         return (something,)
 
 
+def wrap_list(something):
+    if something and type(something) not in [list, tuple]:
+        return [something]
+    return something
+
+class AttrDict(dict):
+    def __iter__(self):
+        for val in self.values():
+            yield val
+
 def attr_dict(attrs):
-    if type(attrs) == OrderedDict:
+    if type(attrs) == AttrDict:
         return attrs
-    attrs_dict = OrderedDict()
+    attrs_dict = AttrDict()
     for attr_item in attrs:
         attrs_dict[attr_item.name] = attr_item
     return attrs_dict
