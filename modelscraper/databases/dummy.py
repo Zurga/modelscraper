@@ -10,5 +10,4 @@ class DummyDatabase(StoreWorker):
         super().__init__(**kwargs)
 
     def _handle(self, template):
-        print(str(template))
         return str(template)
