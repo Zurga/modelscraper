@@ -1,16 +1,18 @@
+import gzip
+import os
+import time
 from collections import defaultdict
 from multiprocessing import Process
-from threading import Event
 from queue import Queue, Empty
-import os
+from sys import stdout
+from threading import Event
+from zipfile import ZipFile
 
 from pybloom import ScalableBloomFilter
 
-from .. import databases
-
 
 class ScrapeWorker(Process):
-    def __init__(self, model, dummy=False):
+    def __init__(self, model):
         super(ScrapeWorker, self).__init__()
 
         self.source_q = Queue()
@@ -21,44 +23,24 @@ class ScrapeWorker(Process):
         self.workers = []
         self.to_forward = []
         self.parser = None
-        self.done_parsing = False
-        self.no_more_sources = False
         self.dbs = dict()
         self.schedule = model.schedule
         self.model = model
         self.source_kill = None
-        self.dummy = dummy
-
-        db_threads = defaultdict(list)
-
-        # Check if the functions in each template are used properly
-        # and store which types of databases are needed.
-        for phase in self.model.phases:
-            for template in phase.templates:
-                self.check_functions(template, phase)
-                if template.db_type:
-                    db_threads[template.db_type].append(template)
+        self.dummy = model.dummy
+        self.total_time = 0
 
         # Start all the threads necessary for storing the data and give each
         # template a reference to the thread it needs to store data in.
-        for thread, templates in db_threads.items():
-            if not dummy:
-                store_thread = databases._threads[thread]()
-            else:
-                store_thread = databases._threads['dummy']()
-
-            for template in templates:
-                self.dbs[template.name] = store_thread
-            store_thread.start()
+        for thread in set(model.dbs.values()):
+            thread.start()
 
     def run(self):
         # create the threads needed to scrape
         i = 0
         while i < len(self.model.phases):
-            # if self.is_scheduled():
             phase = self.model.phases[i]
-            print('running phase:', i, phase.name)
-
+            self.phase = i
             # Check if the phase has a parser, if not, reuse the one from the
             # last phase.
             self.to_parse = 0
@@ -66,9 +48,14 @@ class ScrapeWorker(Process):
 
             if phase.active:
                 self.spawn_workforce(phase)
-                self.add_sources(phase)
+
+                print(self.to_forward[:10])
+                for source in self.to_forward:
+                    self.source_q.put(source)
+                    self.to_parse += 1
+
                 self.to_forward = []
-                self.parse_sources()
+                self.parse_sources(phase)
 
             if not phase.repeat:
                 i += 1
@@ -79,12 +66,24 @@ class ScrapeWorker(Process):
         print('Waiting for the database')
         print('Scraper fully stopped')
 
-    def parse_sources(self):
+    def consume_sources(self, phase, amount=1):
+        if phase.sources:
+            if type(phase.sources) == tuple:
+                for source in phase.sources:
+                    self._add_source(source)
+            else:
+                for _ in range(amount):
+                    self.source_q.put(phase.sources.send(None))
+                    self.to_parse += 1
+
+    def parse_sources(self, phase):
+        self.consume_sources(phase, amount=phase.n_workers)
         while True:
             if self.to_parse == self.parsed:
                 break
             try:
                 source = self.parse_q.get(timeout=10)
+                self.consume_sources(phase, int(phase.n_workers / 2) + 1)
             except Empty:
                 if self.source_q.empty():
                     print('No more sources to parse at this point')
@@ -96,32 +95,49 @@ class ScrapeWorker(Process):
                     source = None
 
             if source is not None:
+                start = time.time()
                 self.seen.add(source.url)
-                objects = self.parser.parse(source)
+
+                if source.compression == 'zip':
+                    source.data = self._read_zip_file(source.data)
+                # TODO add custom template if a source has a template
+
+                for template in phase.templates:
+                    i = 0
+                    # Prepare the data based on multiple parsers
+                    while i < len(template.parser) - 1:
+                        parser = template.parser[i]
+                        selector = template.selector[i]
+                        source.data = parser.parse(source, template,
+                                                   selector=selector,
+                                                   gen_objects=False)
+                        i += 1
+
+                    parser = template.parser[i]
+                    if template.selector:
+                        selector = template.selector[i]
+                    else:
+                        selector = None
+                    # Create the actual objects
+                    objects = parser.parse(source, template=template,
+                                                selector=selector)
+
+                    template.objects = objects
+                    if template.db:
+                        self.model.dbs[id(template)].store_q.put(
+                            template.to_store())
                 self.parsed += 1
 
-                for obj in objects:
-                    if obj.db:
-                        self.dbs[obj.name].store_q.put(obj)
-
-                for new_source in self.new_sources:
+                for new_source in self.model.new_sources:
                     self._gen_source(*new_source)
 
-                self.new_sources = []
+                self.model.new_sources = []
+                self.total_time += time.time() - start
                 self.show_progress()
 
         print('Unparsed ', self.source_q.qsize())
 
     def spawn_workforce(self, phase):
-        # check if phase reuses the current source workforce
-        if phase.parser:
-            self.parser = phase.parser(parent=self, templates=phase.templates)
-        elif not self.parser and not phase.parser:
-            raise Exception('No parser was specified')
-        else:
-            parse_class = self.parser.__class__
-            self.parser = parse_class(parent=self, templates=phase.templates)
-
         if phase.n_workers:
             n_workers = phase.n_workers
         else:
@@ -140,21 +156,10 @@ class ScrapeWorker(Process):
             worker.start()
 
     def add_sources(self, phase):
+        #TODO check this!
         urls_in_db = []
         if phase.synchronize:
             urls_in_db = [url for url in self.get_scraped_urls(phase)]
-
-        for source in self.to_forward:
-            if source.url not in urls_in_db:
-                self.source_q.put(source)
-                self.to_parse += 1
-
-        for source in phase.sources:
-            if source.from_db:
-                sources = self.dbs[source.from_db].read(source.from_db)
-            if source.active:
-                self.source_q.put(source)
-                self.to_parse += 1
 
     def get_scraped_urls(self, phase):
         for template in phase.templates:
@@ -182,6 +187,9 @@ class ScrapeWorker(Process):
                 else:
                     for key in attrs_to_copy:
                         attrs.append(objct.attrs[key]())
+            if attr.source.parent:
+                _parent = attr(name='_parent', value=(objct.url,))
+                attrs.append(_parent)
 
             new_source = attr.source(url=url, attrs=attrs)
 
@@ -217,15 +225,13 @@ class ScrapeWorker(Process):
 
     def _evaluate_condition(self, objct, attr, **kwargs):
         # TODO add "in", and other possibilities.
+        expression = ''
         if attr.source_condition:
-            for name, cond in attr.source_condition.items():
-                values = objct.attrs[name].value
-                # Wrap the value in a list without for example seperating the
-                # characters.
-                values = [values] if type(values) != list else values
-                for val in values:
-                    if val and not eval(str(val) + cond, {}, {}):
-                        return False
+            for operator, attrs in attr.source_condition.items():
+                expression += (' '+operator+' ').join(
+                    [str(value) + c for name, c in attrs.items()
+                     for value in objct.attrs[name].value])
+            return eval(expression, {}, {})
         return True
 
     def reset_source_queue(self):
@@ -241,6 +247,7 @@ class ScrapeWorker(Process):
             os.system('clear')
         info = '''
         Domain              {}
+        Phase               {}
         Sources to get:     {}
         Sources to parse:   {}
         Sources parsed:     {}
@@ -249,22 +256,23 @@ class ScrapeWorker(Process):
         '''
         get_average = sum(w.mean for w in self.workers) / len(self.workers)
         print(info.format(self.name,
+                          self.phase,
                           self.source_q.qsize(),
                           self.to_parse,
                           self.parsed,
                           round(get_average, 3),
-                          round(self.parser.total_time / self.parsed, 3)
+                          round(self.total_time / self.parsed, 3)
                           ))
+        #stdout.flush()
 
-    def check_functions(self, template, phase):
-        error_string = "One of these functions: {} is not implemented in {}."
-        not_implemented = []
+    def _read_zip_file(self, zipfile):
+        content = ''
+        with ZipFile(BytesIO(zipfile)) as myzip:
+            for file_ in myzip.namelist():
+                with myzip.open(file_) as fle:
+                    content += fle.read().decode('utf8')
+        return content
 
-        for attr in template.attrs.values():
-            for func in attr.func:
-                if not getattr(phase.parser, func, False):
-                    not_implemented.append(func)
-
-        if not_implemented:
-            raise Exception(error_string.format(str(not_implemented),
-                                                phase.parser.__class__.__name__))
+    def _read_gzip_file(self, gzfile):
+        with gzip.open(BytesIO(gzfile)) as fle:
+            return fle.read()
