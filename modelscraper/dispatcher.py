@@ -1,4 +1,4 @@
-from . import workers
+from .workers import ScrapeWorker
 from multiprocessing import Queue
 from collections import defaultdict
 import sys
@@ -35,27 +35,13 @@ class Dispatcher:
 
         self.store_q.put(None)
 
-    def add_scraper(self, models, dummy=False):
+    def add_scraper(self, models):
         if type(models) != list:
             models = [models]
 
         for model in models:
-            print('dummy', dummy)
-            scraper = workers.ScrapeWorker(model, dummy=dummy)
+            scraper = ScrapeWorker(model)
             self.scrapers[scraper.name] = scraper
-
-    def _check_functions(self, template, run):
-        error_string = "One of these functions: {} is not implemented in {}."
-        not_implemented = []
-
-        for attr in template.attrs.values():
-            for func in attr.func:
-                if not getattr(run.parser, func, False):
-                    not_implemented.append(func)
-
-        if not_implemented:
-            raise Exception(error_string.format(str(not_implemented),
-                                                run.parser.__class__.__name__))
 
     def print_progress(progress):
         sys.stdout.write('\033[2J\033[H')  # clears the screen
