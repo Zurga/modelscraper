@@ -9,7 +9,7 @@ from .sources import WebSource
 from .parsers import HTMLParser
 from .workers.store_worker import StoreWorker
 from .helpers import selector_converter, attr_dict, str_as_tuple, wrap_list
-from . import databases_new as databases
+import .databases
 
 
 @attr.s
