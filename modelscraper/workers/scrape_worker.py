@@ -9,6 +9,7 @@ from threading import Event
 from zipfile import ZipFile
 
 from pybloom import ScalableBloomFilter
+from diskcache import Deque
 
 
 class ScrapeWorker(Process):
@@ -21,7 +22,7 @@ class ScrapeWorker(Process):
         self.forwarded = ScalableBloomFilter()
         self.new_sources = []
         self.workers = []
-        self.to_forward = []
+        self.to_forward = Deque()
         self.parser = None
         self.dbs = dict()
         self.schedule = model.schedule
@@ -49,12 +50,10 @@ class ScrapeWorker(Process):
             if phase.active:
                 self.spawn_workforce(phase)
 
-                print(self.to_forward[:10])
-                for source in self.to_forward:
-                    self.source_q.put(source)
-                    self.to_parse += 1
+                if not phase.sources:
+                    phase.sources = (source for source in self.to_forward)
 
-                self.to_forward = []
+                self.to_forward = Deque()
                 self.parse_sources(phase)
 
             if not phase.repeat:
@@ -70,11 +69,16 @@ class ScrapeWorker(Process):
         if phase.sources:
             if type(phase.sources) == tuple:
                 for source in phase.sources:
-                    self._add_source(source)
+                    self.source_q.put(source)
             else:
+                added = 0
                 for _ in range(amount):
-                    self.source_q.put(phase.sources.send(None))
-                    self.to_parse += 1
+                    try:
+                        self.source_q.put(phase.sources.send(None))
+                        added += 1
+                    except StopIteration:
+                        pass
+                self.to_parse += added
 
     def parse_sources(self, phase):
         self.consume_sources(phase, amount=phase.n_workers)
@@ -83,13 +87,11 @@ class ScrapeWorker(Process):
                 break
             try:
                 source = self.parse_q.get(timeout=10)
-                self.consume_sources(phase, int(phase.n_workers / 2) + 1)
+                self.consume_sources(phase, int(phase.n_workers / 2) + 2)
             except Empty:
                 if self.source_q.empty():
                     print('No more sources to parse at this point')
                     break
-                # elif self.paused:
-                #     time.sleep(self.get_sleep_time())
                 else:
                     print('Waiting for sources to parse')
                     source = None
@@ -120,7 +122,7 @@ class ScrapeWorker(Process):
                         selector = None
                     # Create the actual objects
                     objects = parser.parse(source, template=template,
-                                                selector=selector)
+                                           selector=selector)
 
                     template.objects = objects
                     if template.db:
@@ -128,8 +130,8 @@ class ScrapeWorker(Process):
                             template.to_store())
                 self.parsed += 1
 
-                for new_source in self.model.new_sources:
-                    self._gen_source(*new_source)
+                for source in self._gen_sources(self.model.new_sources):
+                    self._add_source(source)
 
                 self.model.new_sources = []
                 self.total_time += time.time() - start
@@ -155,12 +157,6 @@ class ScrapeWorker(Process):
         for worker in self.workers:
             worker.start()
 
-    def add_sources(self, phase):
-        #TODO check this!
-        urls_in_db = []
-        if phase.synchronize:
-            urls_in_db = [url for url in self.get_scraped_urls(phase)]
-
     def get_scraped_urls(self, phase):
         for template in phase.templates:
             if template.name in self.dbs:
@@ -168,36 +164,32 @@ class ScrapeWorker(Process):
                     if objct:
                         yield objct.attrs['url'].value
 
-    def _gen_source(self, objct, attr):
-        for value in attr.value:
-            # for now only "or" is supported.
-            if not self._evaluate_condition(objct, attr):
-                continue
+    def _gen_sources(self, source_list):
+        for objct, attr in source_list:
+            for value in attr.value:
+                # for now only "or" is supported.
+                if attr.source_condition and not \
+                        self._evaluate_condition(objct, attr):
+                        continue
 
-            url = self._apply_src_template(attr.source, value)
-            attrs = []
+                url = self._apply_src_template(attr.source, value)
+                attrs = []
 
-            if attr.source.copy_attrs:
-                attrs_to_copy = attr.source.copy_attrs
-                assert all(attr in objct.attrs for attr in attrs_to_copy)
-                if type(attrs_to_copy) == dict:
-                    # We store the copied attributes under different names.
-                    for key, value in attrs_to_copy.items():
-                        attrs.append(objct.attrs[key](name=value))
-                else:
-                    for key in attrs_to_copy:
-                        attrs.append(objct.attrs[key]())
-            if attr.source.parent:
-                _parent = attr(name='_parent', value=(objct.url,))
-                attrs.append(_parent)
+                if attr.source.copy_attrs:
+                    attrs_to_copy = attr.source.copy_attrs
+                    assert all(attr in objct.attrs for attr in attrs_to_copy)
+                    if type(attrs_to_copy) == dict:
+                        # We store the copied attributes under different names.
+                        for key, value in attrs_to_copy.items():
+                            attrs.append(objct.attrs[key](name=value))
+                    else:
+                        for key in attrs_to_copy:
+                            attrs.append(objct.attrs[key]())
+                if attr.source.parent:
+                    _parent = attr(name='_parent', value=(objct.url,))
+                    attrs.append(_parent)
 
-            new_source = attr.source(url=url, attrs=attrs)
-
-            if attr.attr_condition:
-                if self.value_is_new(objct, value, attr.attr_condition):
-                    self._add_source(new_source)
-            else:
-                self._add_source(new_source)
+                yield attr.source(url=url, attrs=attrs)
 
     def _add_source(self, source):
         if source.url and (source.url not in self.seen or source.duplicate) \
@@ -224,23 +216,14 @@ class ScrapeWorker(Process):
         return url
 
     def _evaluate_condition(self, objct, attr, **kwargs):
-        # TODO add "in", and other possibilities.
         expression = ''
-        if attr.source_condition:
-            for operator, attrs in attr.source_condition.items():
-                expression += (' '+operator+' ').join(
-                    [str(value) + c for name, c in attrs.items()
-                     for value in objct.attrs[name].value])
-            return eval(expression, {}, {})
-        return True
 
-    def reset_source_queue(self):
-        while not self.source_q.empty():
-            try:
-                self.source_q.get(False)
-            except Empty:
-                continue
-            self.source_q.task_done()
+        for operator, attrs in attr.source_condition.items():
+            expression += (' '+operator+' ').join(
+                [str(value) + c for name, c in attrs.items()
+                    for value in objct.attrs[name].value])
+
+        return eval(expression, {}, {})
 
     def show_progress(self):
         if not self.dummy:
@@ -250,7 +233,7 @@ class ScrapeWorker(Process):
         Phase               {}
         Sources to get:     {}
         Sources to parse:   {}
-        Sources parsed:     {}
+        Sources parsed:     {} {}%
         Average get time:   {}s
         Average parse time: {}s
         '''
@@ -259,11 +242,10 @@ class ScrapeWorker(Process):
                           self.phase,
                           self.source_q.qsize(),
                           self.to_parse,
-                          self.parsed,
+                          self.parsed, (self.parsed / self.to_parse) * 100,
                           round(get_average, 3),
                           round(self.total_time / self.parsed, 3)
                           ))
-        #stdout.flush()
 
     def _read_zip_file(self, zipfile):
         content = ''
