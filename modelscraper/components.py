@@ -9,7 +9,7 @@ from .sources import WebSource
 from .parsers import HTMLParser
 from .workers.store_worker import StoreWorker
 from .helpers import selector_converter, attr_dict, str_as_tuple, wrap_list
-import .databases
+from . import databases
 
 
 @attr.s
@@ -69,7 +69,7 @@ def source_conv(source):
 @attr.s
 class Attr(BaseModel):
     '''
-    An attr is used to hold a value as an attribute for a template.
+    An Attr is used to hold a value as an attribute for a template.
     The value for the attribute is obtained by applying the func
     on the element obtained through the selector.
     '''
@@ -142,14 +142,6 @@ class Template(BaseModel):
         if self.objects:
             replica.objects = self.objects[:]
         return replica
-
-    '''
-    def __getstate__(self):
-        state = self.__dict__.copy()
-        for attr in ['attrs', 'selector', 'source', 'required', 'partial', 'args']:
-            del state[attr]
-        return state
-    '''
 
     def attrs_from_dict(self, attrs):
         self.attrs = attr_dict((Attr(name=name, value=value) for
