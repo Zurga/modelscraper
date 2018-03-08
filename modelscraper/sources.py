@@ -19,7 +19,7 @@ class BaseSourceWorker(Thread):
         self.visited = 0
 
     def __call__(self, **kwargs):
-        return self.__class__(**kwargs, **self.inits)
+        return self.__class__(**kwargs, **self.inits)  # noqa
 
     def run(self):
         print('started')
@@ -91,7 +91,6 @@ class WebSource(BaseSourceWorker):
                 self.to_parse -= 1
 
 
-#TODO fix the FileWorker class to the new spec.
 class FileSource(BaseSourceWorker):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
