@@ -1,11 +1,8 @@
 from datetime import datetime
-from functools import reduce
-from queue import Empty
-from types import FunctionType
 import csv
 import json
 import re
-import sys
+import logging
 
 import lxml.html as lxhtml
 from lxml.etree import XPath
@@ -13,7 +10,6 @@ from lxml.cssselect import CSSSelector, SelectorSyntaxError
 from scrapely import Scraper
 
 from .helpers import str_as_tuple, add_other_doc
-sys.setrecursionlimit(10000000)
 
 
 class BaseParser:
@@ -32,7 +28,6 @@ class BaseParser:
         self.domain = parent.domain
         # Set all selectors and the functions of the attrs to the correct
         # functions and selectors of the parser.
-        #self.templates = self._prepare_templates(templates)
         self._prepare_templates(templates)
         self.parent = parent
 
@@ -65,22 +60,24 @@ class BaseParser:
         # else:
         #    templates = self.templates
 
-        # for template in templates:
         extracted = self._extract(data, selector)
+        if not extracted:
+            logging.log(logging.WARNING, "{selector} selector of template: " +
+                        "{name} returned no data".format(selector,
+                                                         template.name))
+
         if not gen_objects:
             return self.to_string(extracted)
-
         objects = list(self._gen_objects(template, extracted, source))
 
         if not template.objects and template.required:
             print(template.selector, 'yielded nothing, quitting.')
             self.parent.reset_source_queue()
 
-        return objects # .to_store()
+        return objects
 
     def _prepare_templates(self, templates):
         for template in templates:
-            # template.selector = [self._get_selector(template)]
             for attr in template.attrs.values():
                 attr.func = self._get_funcs(attr.func)
                 attr.selector = self._get_selector(attr.selector)
@@ -127,20 +124,21 @@ class BaseParser:
             # We want to count how many attrs return None
             # Don't return anything if we have no values for the attributes
             if no_value == len(objct.attrs) - len(source.attrs):
-                print('Template {} has failed, attempting to use the fallback'.\
-                      format(template.name))
+                logging.log(
+                    logging.WARNING, 'Template {} has failed, attempting to' + /
+                    'use the fallback'.format(template.name))
                 print(source.url)
                 if getattr(self, '_fallback', None) and False:
                     for objct in self._fallback(template, extracted, source):
                         yield objct
                     continue
                 else:
-                    print('Template', template.name, 'failed')
-                    print('data', data.text_content())
+                    logging.log(logging.WARNING,
+                                'Template' + template.name + 'failed')
+                    logging.log(logging.WARNING, 'data:\n' + data.text_content())
                     continue
 
             # Create a new Source from the template if desirable
-            # TODO fix this.
             if template.source and getattr(self, '_source_from_object', None):
                 objct.source = template.source()
                 self._source_from_object(objct, source)
@@ -158,13 +156,15 @@ class BaseParser:
                 parsed = self._apply_funcs(elements, attr.func, attr.kws)
 
                 if attr.type and type(parsed) != attr.type:
-                    print('Not the same type')
+                    logging.log(
+                        logging.WARNING,
+                        'Not the same type' + attr.name + attr.type +
+                        str(parsed))
 
                 new_attr = attr._replicate(name=attr.name, value=parsed,
                                            source=attr.source)
 
                 # Create a request from the attribute if desirable
-                # TODO add the source to the attr straightaway.
                 if attr.source and parsed:
                     self.parent.new_sources.append((objct, new_attr))
 
@@ -249,8 +249,6 @@ class HTMLParser(BaseParser):
     def __init__(self, **kwargs):
         super(HTMLParser, self).__init__(**kwargs)
         self.scrapely_parser = None
-        for key, value in kwargs.items():
-            setattr(self, key, value)
 
     def _convert_data(self, data):
         try:  # Create an HTML object from the returned text.
@@ -258,13 +256,13 @@ class HTMLParser(BaseParser):
         except ValueError:  # This happens when xml is declared in html.
             data = lxhtml.fromstring('\n'.join(data.split('\n')[1:]))
         except TypeError:
-            print(data)
-            print('Something weird has been returned by the server.')
+            logging.log(logging.WARNING,
+                        'Something weird has been returned by the server.')
+            logging.log(logging.WARNING, data)
         data.make_links_absolute(self.domain)
         return data
 
     def _get_selector(self, selector):
-        # assert len(model.selector) == 1, "Only one selector can be used."
         if selector:
             if type(selector) in (CSSSelector, XPath):
                 return selector
@@ -286,26 +284,10 @@ class HTMLParser(BaseParser):
             return (data,)
 
     def _extract(self, html, selector):
-        # We have normal html
-        # if not template.js_regex:
         if html is not None:
             extracted = self._apply_selector(selector, html)
         else:
             extracted = []
-        # We want to extract a json_variable from the server
-        '''
-        else:
-            regex = re.compile(template.js_regex)
-            extracted = []
-            # Find all the scripts that match the regex.
-            scripts = (regex.findall(s.text_content())[0] for s in
-                       html.cssselect('script')
-                       if regex.search(s.text_content()))
-
-            # Set selected to the scripts
-            for script in scripts:
-                extracted.extend(json.loads(script))
-        '''
         return extracted
 
     def to_string(self, data):
@@ -322,9 +304,11 @@ class HTMLParser(BaseParser):
             url = objct.attrs.get('url')
 
             if url and not isinstance(url, list):
-                new_source.url = self.parent._apply_src_template(source, url.value)
+                new_source.url = self.parent._apply_src_template(source,
+                                                                 url.value)
             else:
-                new_source.url = self.parent._apply_src_template(source, source.url)
+                new_source.url = self.parent._apply_src_template(source,
+                                                                 source.url)
 
         if new_source.copy_attrs:
             new_source = self._copy_attrs(objct, new_source)
@@ -427,7 +411,8 @@ class HTMLParser(BaseParser):
     def sel_url(self, elements, index: int=None, **kwargs):
         return self.sel_attr(elements, attr='href', index=index, **kwargs)
 
-    def sel_date(self, elements, fmt: str='YYYYmmdd', attr: str=None, index: int=None):
+    def sel_date(self, elements, fmt: str='YYYYmmdd', attr: str=None, index:
+                 int=None):
         '''
         Returns a python date object with the specified format.
         '''
@@ -450,9 +435,6 @@ class HTMLParser(BaseParser):
 
     def sel_raw_html(self, elements):
         return [el.raw_html for el in elements]
-
-    def sel_json(self, obj, selector, key=''):
-        return obj.get(key)
 
     def sel_js_array(self, elements, var_name='', var_type=None):
         var_regex = 'var\s*'+var_name+'\s*=\s*(?:new Array\(|\[)(.*)(?:\)|\]);'
@@ -477,8 +459,6 @@ class HTMLParser(BaseParser):
 class JSONParser(BaseParser):
     def __init__(self, **kwargs):
         super(JSONParser, self).__init__(**kwargs)
-        for key, value in kwargs.items():
-            setattr(self, key, value)
 
     def _flatten(self, lis):
         new_list = []
@@ -502,13 +482,11 @@ class JSONParser(BaseParser):
             return data
 
     def to_string(self, data):
-        print(data)
         return ''.join(data).encode('utf8')
 
     def _apply_selector(self, selector, data):
         while selector and data:
             cur_sel = selector[0]
-            print(data)
             if type(data) == dict:
                 if cur_sel in data:
                     data = data[cur_sel]
@@ -526,32 +504,6 @@ class JSONParser(BaseParser):
             return [data]
         return data
 
-    def _old_apply_selector(self, selector, data):
-        if selector:
-            if len(selector) == 0:
-                print('found', data)
-                if type(data) != list:
-                    return [data]
-                return data
-            if type(data) == dict:
-                if selector[0] in data:
-                    return self._apply_selector(selector[1:], data[selector[0]])
-                else:
-                    return []
-            if data and type(data) == list:
-                if all(type(d)==dict for d in data):
-                    data = [d.get(selector[0]) for d in data]
-                    print(data)
-                    return self._apply_selector(selector[1:], data)
-                else:
-                    data = [d for d in data]
-                    return self._apply_selector(selector, data)
-        else:
-            print('found else', data)
-            if type(data) != list:
-                return [data]
-            return data
-
     def _get_selector(self, selector):
         return str_as_tuple(selector)
 
@@ -566,8 +518,6 @@ class JSONParser(BaseParser):
 class TextParser(BaseParser):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        for key, value in kwargs.items():
-            setattr(self, key, value)
 
     def _convert_data(self, data):
         return data
@@ -594,8 +544,6 @@ class TextParser(BaseParser):
 class CSVParser(BaseParser):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        for key, value in kwargs.items():
-            setattr(self, key, value)
 
     def _convert_data(self, data):
         return data
