@@ -51,14 +51,6 @@ def selector_converter(selector):
             raise Exception('This value for a selector was not understood',
                             selector)
 
-'''
-def source_conv(source):
-    if source:
-        if source.__class__ == Source:
-            return source
-        return Source(**source) if type(source) == dict else Source()
-'''
-
 
 def str_as_tuple(something):
     if something is not None:
