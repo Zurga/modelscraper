@@ -69,7 +69,6 @@ class MongoDB(BaseDatabase):
     '''
     A thread thread that will communicate with a single MongoDB instance.
     Look in the pymongo docs for possible functions to storing.
-
     '''
     name = 'mongo_db'
 
@@ -91,18 +90,14 @@ class MongoDB(BaseDatabase):
             print('No objects in', template.name)
         return False
 
-    @add_other_doc(Collection.insert_many)
+    #!@add_other_doc(Collection.insert_many)
     def create(self, objects, *args, **kwargs):
-        # TODO link from the StoreWorker documentation
-        # TODO link to the pymongo documentation
         return self.coll.insert_many([obj.to_dict() for obj in objects],
                                      *args, **kwargs)
 
-    @add_other_doc(Collection.bulk_write)
+    #!@add_other_doc(Collection.bulk_write)
     def update(self, objects, key='', method='$set', upsert=True,
                 date=False):
-        # TODO link from the StoreWorker documentation
-        # TODO add pymongo documentation link.
         if objects:
             queries = self._create_queries(key, objects)
             if date:
@@ -117,7 +112,7 @@ class MongoDB(BaseDatabase):
             return self.coll.bulk_write(db_requests)
         return False
 
-    @add_other_doc(Collection.find)
+    #!@add_other_doc(Collection.find)
     def read(self, template=None, url='', **kwargs):
         self.db = self.client[template.db]
         self.coll = self.db[template.table]
@@ -137,6 +132,7 @@ class MongoDB(BaseDatabase):
         else:
             return ({key: obj.attrs[key].value[0]} for obj in objects)
 
+
 class Dummy(BaseDatabase):
     """
     A dummy database class which can be used to print the results to the screen.
@@ -147,6 +143,10 @@ class Dummy(BaseDatabase):
 
     def _handle(self, template):
         print(template.objects)
+        for ob in template.objects:
+            print(ob.name, end='')
+            for attr in ob.attrs:
+                print('\t', attr.name, attr.value)
 
 
 class ShellCommand(BaseDatabase):
@@ -156,5 +156,4 @@ class ShellCommand(BaseDatabase):
     def _handle(self, item):
         for objct in item.objects:
             arguments = item.kws['command'].format(**objct).split()
-
             subprocess.Popen(arguments)
