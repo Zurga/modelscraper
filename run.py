@@ -14,8 +14,8 @@ if 'banner.txt' in os.listdir():
     with open('banner.txt') as fle:
         print(fle.read())
 
-available_models = [f[:-3] for f in os.listdir('scrape_models')
-                  if f.endswith('.py') and not f.startswith('__')]
+available_models = sorted([f[:-3] for f in os.listdir('scrape_models')
+                  if f.endswith('.py') and not f.startswith('__')])
 @click.command()
 @click.argument('model', nargs=-1)
 @click.option('--dummy', default=False, help='Whether to do a dummy run')
