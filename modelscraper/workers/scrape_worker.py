@@ -7,6 +7,7 @@ from queue import Queue, Empty
 from sys import stdout
 from threading import Event
 from zipfile import ZipFile
+import logging
 
 from pybloom import ScalableBloomFilter
 from diskcache import Deque
@@ -58,18 +59,21 @@ class ScrapeWorker(Process):
 
             if not phase.repeat:
                 i += 1
-        for db in self.dbs.values():
+        self._kill_workers()
+        for db in self.model.dbs.values():
             db.store_q.put(None)
-        for db in self.dbs.values():
+        for db in self.model.dbs.values():
             db.store_q.join()
         print('Waiting for the database')
         print('Scraper fully stopped')
 
     def consume_sources(self, phase, amount=1):
         if phase.sources:
-            if type(phase.sources) == tuple:
+            if type(phase.sources) == tuple or type(phase.sources) == list:
                 for source in phase.sources:
                     self.source_q.put(source)
+                    self.to_parse += 1
+                phase.sources = False
             else:
                 added = 0
                 for _ in range(amount):
@@ -77,11 +81,11 @@ class ScrapeWorker(Process):
                         self.source_q.put(phase.sources.send(None))
                         added += 1
                     except StopIteration:
-                        pass
+                        continue
                 self.to_parse += added
 
     def parse_sources(self, phase):
-        self.consume_sources(phase, amount=phase.n_workers)
+        self.consume_sources(phase, amount=phase.n_workers + 1)
         while True:
             if self.to_parse == self.parsed:
                 break
@@ -89,7 +93,10 @@ class ScrapeWorker(Process):
                 source = self.parse_q.get(timeout=10)
                 self.consume_sources(phase, int(phase.n_workers / 2) + 2)
             except Empty:
-                if self.source_q.empty():
+                # Break out of the while loop if there are no sources to
+                # parse and the workers are not busy retrieving a source.
+                if self.source_q.empty() and all(worker.retrieving == False
+                                                 for worker in self.workers):
                     print('No more sources to parse at this point')
                     break
                 else:
@@ -105,21 +112,25 @@ class ScrapeWorker(Process):
                 # TODO add custom template if a source has a template
 
                 for template in phase.templates:
-                    i = 0
                     # Prepare the data based on multiple parsers
-                    while i < len(template.parser) - 1:
-                        parser = template.parser[i]
-                        selector = template.selector[i]
-                        source.data = parser.parse(source, template,
-                                                   selector=selector,
-                                                   gen_objects=False)
-                        i += 1
+                    if len(template.parser) > 1:
+                        i = 0
+                        while i < len(template.parser) - 1:
+                            parser = template.parser[i]
+                            selector = template.selector[i]
+                            source.data = parser.parse(source, template,
+                                                    selector=selector,
+                                                    gen_objects=False)
+                            i += 1
 
-                    parser = template.parser[i]
-                    if template.selector:
-                        selector = template.selector[i]
+                        parser = template.parser[i]
+                        if template.selector:
+                            selector = template.selector[i]
+                        else:
+                            selector = None
                     else:
-                        selector = None
+                        selector = template.selector
+                        parser = template.parser[0]
                     # Create the actual objects
                     objects = parser.parse(source, template=template,
                                            selector=selector)
@@ -139,20 +150,25 @@ class ScrapeWorker(Process):
 
         print('Unparsed ', self.source_q.qsize())
 
+    def _kill_workers(self):
+        logging.log(logging.DEBUG, "Killing workers")
+        if self.workers:
+            for worker in self.workers:
+                self.source_q.put(None)
+            for worker in self.workers:
+                worker.join()
+        logging.log(logging.DEBUG, "Workers killed")
+
     def spawn_workforce(self, phase):
+        # Kill existing workers if there are any
+        self._kill_workers()
+
         if phase.n_workers:
             n_workers = phase.n_workers
         else:
             n_workers = self.model.num_getters
 
-        # Kill existing workers if there are any
-        if self.workers:
-            self.source_kill.set()
-
-        # Create new Event to be able to kill the source workers
-        self.source_kill = Event()
-        self.workers = [phase.source_worker(parent=self, id=i,
-                                       stop_event=self.source_kill)
+        self.workers = [phase.source_worker(parent=self, id=i)
                    for i in range(n_workers)]
         for worker in self.workers:
             worker.start()
@@ -195,11 +211,14 @@ class ScrapeWorker(Process):
         if source.url and (source.url not in self.seen or source.duplicate) \
                 and source.url not in self.forwarded:
             if source.active:
+                print(source.url)
                 self.to_parse += 1
                 self.source_q.put(source)
                 self.seen.add(source.url)
             else:
+                print('forwarded', source.url)
                 self.to_forward.append(source)
+                print(self.to_forward[-1])
                 self.forwarded.add(source.url)
 
     def value_is_new(self, objct, uri, name):
