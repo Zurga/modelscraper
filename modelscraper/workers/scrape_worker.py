@@ -211,14 +211,11 @@ class ScrapeWorker(Process):
         if source.url and (source.url not in self.seen or source.duplicate) \
                 and source.url not in self.forwarded:
             if source.active:
-                print(source.url)
                 self.to_parse += 1
                 self.source_q.put(source)
                 self.seen.add(source.url)
             else:
-                print('forwarded', source.url)
                 self.to_forward.append(source)
-                print(self.to_forward[-1])
                 self.forwarded.add(source.url)
 
     def value_is_new(self, objct, uri, name):
