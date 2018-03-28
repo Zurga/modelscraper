@@ -13,25 +13,31 @@ class BaseSourceWorker(Thread):
             self.in_q = parent.source_q
             self.out_q = parent.parse_q
             self.parent = parent
-            self.stop_event = stop_event
         self.mean = 0
         self.total_time = 0
         self.visited = 0
+        self.retrieving = False
 
     def __call__(self, **kwargs):
         return self.__class__(**kwargs, **self.inits)  # noqa
 
     def run(self):
-        print('started')
-        while not self.stop_event.wait(0):
+        print('started', self.__class__.__name__, id(self))
+        while True:
             start = time.time()
-            source = self.retrieve(self.in_q.get())
+            source = self.in_q.get()
+            if source is None:
+                break
+            self.retrieving = True
+            source = self.retrieve(source)
+            # source = self.retrieve(self.in_q.get())
             if source:
                 self.out_q.put(source)
             self.visited += 1
             self.total_time += time.time() - start
             self.mean = self.total_time / self.visited
             self.in_q.task_done()
+            self.retrieving = False
         print('Done')
 
     def retrieve(self):
@@ -81,7 +87,7 @@ class WebSource(BaseSourceWorker):
             time.sleep(self.time_out)
 
         except Exception as E:
-            print(E)
+            print(self.__class__.__name__, id(self), E)
             self.to_parse -= 1
         else:
             if page and source.parse:
@@ -102,9 +108,8 @@ class FileSource(BaseSourceWorker):
 
 
 class ProgramSource(BaseSourceWorker):
-    def __init__(self, function='', *args, **kwargs):
-        print(kwargs)
-        super().__init__(*args, **kwargs)
+    def __init__(self, function='', **kwargs):
+        super().__init__(**kwargs)
         self.function = function
         self.inits = {'function': function}
 
@@ -113,3 +118,33 @@ class ProgramSource(BaseSourceWorker):
                                 stdout=subprocess.PIPE)
         source.data = result.stdout.decode('utf-8')
         return source
+
+
+class APISource(BaseSourceWorker):
+    def __init__(self, api_function=None, batch=1, **kwargs):
+        super().__init__(**kwargs)
+        self.api_function = api_function
+        self.batch = batch
+
+    def retrieve_batch(self, sources):
+        return self.api_function(source[0] if type(sources) == list else source)
+
+    def run(self):
+        print('started', self.__class__.__name__, id(self))
+        while True:
+            start = time.time()
+            source = self.in_q.get()
+            if source is None:
+                break
+            self.retrieving = True
+            source = self.retrieve(source)
+            # source = self.retrieve(self.in_q.get())
+            if source:
+                self.out_q.put(source)
+            self.visited += 1
+            self.total_time += time.time() - start
+            self.mean = self.total_time / self.visited
+            self.in_q.task_done()
+            self.retrieving = False
+        print('Done')
+
