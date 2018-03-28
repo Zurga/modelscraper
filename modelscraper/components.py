@@ -22,7 +22,7 @@ class BaseModel(object):
 
 
 @attr.s
-class Phase:
+class Phase(BaseModel):
     active = attr.ib(default=True)
     name = attr.ib(default='')
     n_workers = attr.ib(default=1)
@@ -75,7 +75,7 @@ class Attr(BaseModel):
     '''
     selector = attr.ib(default=None, convert=str_as_tuple)
     name = attr.ib(default=None)
-    value = attr.ib(default=None, convert=str_as_tuple)
+    value = attr.ib(default=None)
     func = attr.ib(default=None, convert=str_as_tuple,
                    metadata={'Phase.parser': 1})
     attr_condition = attr.ib(default={})
@@ -84,6 +84,7 @@ class Attr(BaseModel):
                      metadata={'Source': 1})
     kws = attr.ib(default=attr.Factory(dict))
     type = attr.ib(default=None)
+    arity = attr.ib(default=1)
 
     def __attrs_post_init__(self):
         # Ensure that the kws are encapsulated in a list with the same length
@@ -195,10 +196,13 @@ class ScrapeModel:
             for template in phase.templates:
                 template.parser = [self.parsers[p] for p in template.parser]
                 # TODO Fix the right selector with the right parser.
-                if template.selector:
+                if template.selector and len(template.parser) > 1:
                     template.selector = [parser._get_selector([selector])
                                         for parser, selector in
                                         zip(template.parser, template.selector)]
+                else:
+                    template.selector = template.parser[0]._get_selector(
+                        template.selector)
             template.parser[-1]._prepare_templates(phase.templates)
 
     def set_db_threads(self, db_threads):
