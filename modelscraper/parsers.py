@@ -5,7 +5,7 @@ import re
 import logging
 
 import lxml.html as lxhtml
-from lxml.etree import XPath
+from lxml.etree import XPath, XMLSyntaxError
 from lxml.cssselect import CSSSelector, SelectorSyntaxError
 from scrapely import Scraper
 
@@ -19,8 +19,8 @@ class BaseParser:
         _add_source: add a source to the current queue or
                      forward it to another run.
     which can all be overridden in subclasses.
-    I
     '''
+
     def __init__(self, parent=None, templates=[], **kwargs):
         if not parent:
             raise Exception('No parent or phase was specified')
@@ -63,8 +63,8 @@ class BaseParser:
         extracted = self._extract(data, selector)
         if not extracted:
             logging.log(logging.WARNING, "{selector} selector of template: " +
-                        "{name} returned no data".format(selector,
-                                                         template.name))
+                        "{name} returned no data".format(selector=selector,
+                                                         name=template.name))
 
         if not gen_objects:
             return self.to_string(extracted)
@@ -72,7 +72,8 @@ class BaseParser:
 
         if not template.objects and template.required:
             print(template.selector, 'yielded nothing, quitting.')
-            self.parent.reset_source_queue()
+            source.duplicate = True
+            self.parent._add_source(source)
 
         return objects
 
@@ -115,7 +116,7 @@ class BaseParser:
             no_value = 0
 
             # Set the attributes.
-            for attr in self._gen_attrs(template.attrs.values(), objct, data):
+            for attr in self._gen_attrs(template.attrs, objct, data):
                 objct.attrs[attr.name] = attr
 
                 if not attr.value:
@@ -124,18 +125,18 @@ class BaseParser:
             # We want to count how many attrs return None
             # Don't return anything if we have no values for the attributes
             if no_value == len(objct.attrs) - len(source.attrs):
-                logging.log(
-                    logging.WARNING, 'Template {} has failed, attempting to' + /
-                    'use the fallback'.format(template.name))
                 print(source.url)
                 if getattr(self, '_fallback', None) and False:
+                    logging.log(logging.WARNING,
+                                'Template {} has failed, attempting to' +
+                                ' use the fallback'.format(template.name))
                     for objct in self._fallback(template, extracted, source):
                         yield objct
                     continue
                 else:
                     logging.log(logging.WARNING,
                                 'Template' + template.name + 'failed')
-                    logging.log(logging.WARNING, 'data:\n' + data.text_content())
+                    #logging.log(logging.WARNING, 'data:\n' + str(data))
                     continue
 
             # Create a new Source from the template if desirable
@@ -176,13 +177,6 @@ class BaseParser:
         else:
             parsed = parse_funcs[0](elements, **kws[0])
             return self._apply_funcs(parsed, parse_funcs[1:], kws[1:])
-
-    def _value(self, parsed, index=None):
-        if type(parsed) != list:
-            parsed = list(parsed)
-        if len(parsed) == 1:
-            return parsed[0]
-        return parsed[index] if index else parsed
 
     # TODO check if this belongs here...
     def _copy_attrs(self, objct, source):
@@ -225,7 +219,8 @@ class BaseParser:
             text = (f for t in text for f in regex.findall(t))
 
         if needle:
-            if not all([re.match(re.escape(needle), t) for t in text]):
+            matches = [re.match(re.escape(needle), t) for t in text]
+            if not all(matches):
                 return [None]
 
         if numbers:
@@ -240,6 +235,11 @@ class BaseParser:
         stripped = (t.lstrip().rstrip() for t in text if t)
         text = self.modify_text(stripped, **kwargs)
         return self._value(text, index)
+
+    def _value(self, parsed, index=None):
+        if type(parsed) != list:
+            parsed = list(parsed)
+        return parsed[index] if index else parsed
 
 
 class HTMLParser(BaseParser):
@@ -259,8 +259,15 @@ class HTMLParser(BaseParser):
             logging.log(logging.WARNING,
                         'Something weird has been returned by the server.')
             logging.log(logging.WARNING, data)
-        data.make_links_absolute(self.domain)
-        return data
+            return False
+        except XMLSyntaxError:
+            logging.log(logging.WARNING,
+                        'XML syntax parsing error:')
+            logging.log(logging.WARNING, data)
+            return False
+        else:
+            data.make_links_absolute(self.domain)
+            return data
 
     def _get_selector(self, selector):
         if selector:
@@ -395,6 +402,7 @@ class HTMLParser(BaseParser):
                         for row in rows]
         return self._value(selected, index)
 
+    @add_other_doc(BaseParser.modify_text)
     def sel_attr(self, elements, attr: str='', **kwargs):
         '''
         Extract an attribute of an HTML element. Will return
@@ -408,6 +416,7 @@ class HTMLParser(BaseParser):
         attrs = (el.attrib.get(attr) for el in elements)
         return self._sel_text(attrs, **kwargs)
 
+    @add_other_doc(BaseParser.modify_text)
     def sel_url(self, elements, index: int=None, **kwargs):
         return self.sel_attr(elements, attr='href', index=index, **kwargs)
 
@@ -445,6 +454,7 @@ class HTMLParser(BaseParser):
             return array_string.split(',')
 
     def fill_form(self, elements, fields={}, attrs=[]):
+        from .components import Source
         for form in elements:
             data = {**dict(form.form_values()), **fields}
             source = Source(url=form.action, method=form.method, duplicate=True,
@@ -453,7 +463,7 @@ class HTMLParser(BaseParser):
                 source.params = data
             else:
                 source.data = data
-            self._add_source(source)
+            self.parent._add_source(source)
 
 
 class JSONParser(BaseParser):
@@ -491,6 +501,9 @@ class JSONParser(BaseParser):
                 if cur_sel in data:
                     data = data[cur_sel]
                 else:
+                    logging.log(logging.WARNING, 'JSONPARSER.apply_selector' +
+                                ' failed at selector ' + str(cur_sel) + ' ' +
+                                str(selector) + ' ' +str(data))
                     data = None
             elif type(data) == list:
                 if type(cur_sel) == int:
@@ -538,7 +551,7 @@ class TextParser(BaseParser):
         """
         Selects the text from data.
         """
-        return self._sel_text(elements, **kwargs)
+        return self._sel_text([elements], **kwargs)
 
 
 class CSVParser(BaseParser):
