@@ -109,6 +109,7 @@ class MongoDB(BaseDatabase):
             db_requests = [UpdateMany(query, {method: obj.to_dict()},
                                       upsert=upsert) for obj, query in
                            zip(objects, queries)]
+            print(db_requests)
             return self.coll.bulk_write(db_requests)
         return False
 
@@ -142,11 +143,10 @@ class Dummy(BaseDatabase):
         super().__init__(**kwargs)
 
     def _handle(self, template):
-        print(template.objects)
         for ob in template.objects:
             print(ob.name, end='')
             for attr in ob.attrs:
-                print('\t', attr.name, attr.value)
+                print('\n\t', attr.name, attr.value)
 
 
 class ShellCommand(BaseDatabase):
