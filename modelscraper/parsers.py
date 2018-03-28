@@ -70,7 +70,7 @@ class BaseParser:
             return self.to_string(extracted)
         objects = list(self._gen_objects(template, extracted, source))
 
-        if not template.objects and template.required:
+        if not objects and template.required:
             print(template.selector, 'yielded nothing, quitting.')
             source.duplicate = True
             self.parent._add_source(source)
