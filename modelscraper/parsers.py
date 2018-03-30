@@ -447,7 +447,7 @@ class HTMLParser(BaseParser):
 
     def sel_js_array(self, elements, var_name='', var_type=None):
         var_regex = 'var\s*'+var_name+'\s*=\s*(?:new Array\(|\[)(.*)(?:\)|\]);'
-        array_string = self.sel_text(elements, regex=var_regex)
+        array_string = self.sel_text(elements, regex=var_regex, index=0)
         if array_string:
             if var_type:
                 return list(map(var_type, array_string.split(',')))
