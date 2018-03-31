@@ -134,21 +134,6 @@ class MongoDB(BaseDatabase):
             return ({key: obj.attrs[key].value[0]} for obj in objects)
 
 
-class Dummy(BaseDatabase):
-    """
-    A dummy database class which can be used to print the results to the screen.
-    """
-
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-
-    def _handle(self, template):
-        for ob in template.objects:
-            print(ob.name, end='')
-            for attr in ob.attrs:
-                print('\n\t', attr.name, attr.value)
-
-
 class ShellCommand(BaseDatabase):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
