@@ -100,7 +100,7 @@ class Attr(BaseModel):
         if new_kws:
             new_kws = wrap_list(new_kws)
             kwargs['kws'] = [{**old, **new} for new, old in
-                             zip_longest(new_kws, self.kws, fillvalue={})]
+                            zip_longest(new_kws, self.kws, fillvalue={})]
         return self.__class__(**{**self.__dict__, **kwargs})  # noqa
 
 
@@ -121,6 +121,7 @@ class Template(BaseModel):
     attrs = attr.ib(default=attr.Factory(dict), convert=attr_dict)
     url = attr.ib(default='')
     parser = attr.ib(default=False, convert=wrap_list)
+    _store_worker = attr.ib(init=False)
 
     def __attrs_post_init__(self):
         if self.db and not self.table:
@@ -137,12 +138,13 @@ class Template(BaseModel):
         return {a.name: a.value for a in self.attrs}
 
     def to_store(self):
-        replica = self.__class__(db=self.db, table=self.table, func=self.func,
-                                 db_type=self.db_type, kws=self.kws,
-                                 name=self.name, url=self.url)
-        if self.objects:
-            replica.objects = self.objects[:]
-        return replica
+        if self._store_worker:
+            replica = self.__class__(db=self.db, table=self.table, func=self.func,
+                                    db_type=self.db_type, kws=self.kws,
+                                    name=self.name, url=self.url)
+            if self.objects:
+                replica.objects = self.objects[:]
+            self._store_worker.store_q.put(replica)
 
     def attrs_from_dict(self, attrs):
         self.attrs = attr_dict((Attr(name=name, value=value) for
@@ -151,6 +153,28 @@ class Template(BaseModel):
     def add_attr(self, attr):
         attr = Attr(name=name, value=value, **kwargs)
         self.attrs[attr.name] = attr
+
+    def parse(self, source):
+        if len(self.parser) > 1:
+            i = 0
+            while i < len(self.parser) - 1:
+                parser = self.parser[i]
+                selector = self.selector[i]
+                source.data = parser.parse(source, self,
+                                        selector=selector,
+                                        gen_objects=False)
+                i += 1
+
+            parser = self.parser[i]
+            if self.selector:
+                selector = self.selector[i]
+            else:
+                selector = None
+        else:
+            parser = self.parser[0]
+        # Create the actual objects
+        self.objects = parser.parse(source, template=self,
+                                selector=self.selector)
 
     '''
     def __repr__(self):
@@ -179,7 +203,6 @@ class ScrapeModel:
         self.schedule = schedule
         self.dbs = dict()
         self.new_sources = []
-        self._dummy = dummy
 
         if cookies:
             print(cookies)
@@ -187,8 +210,8 @@ class ScrapeModel:
 
         for key, value in kwargs.items():
             setattr(self, key, value)
-        self.db_threads, parsers = self.prepare_phases()
-        self.set_db_threads(self.db_threads)
+        db_threads, parsers = self.prepare_phases()
+        self.set_db_threads(db_threads)
 
         self.parsers = {parser: parser(parent=self) for parser in parsers}
 
@@ -206,21 +229,13 @@ class ScrapeModel:
             template.parser[-1]._prepare_templates(phase.templates)
 
     def set_db_threads(self, db_threads):
+        self.db_threads = set()
         for thread, templates in db_threads.items():
             store_thread = getattr(databases, thread)()
 
             for template in templates:
-                self.dbs[id(template)] = store_thread
-
-    @property
-    def dummy(self):
-        return self._dummy
-
-    @dummy.setter
-    def dummy(self, dummy):
-        self._dummy = dummy
-        self.set_db_threads({'Dummy':templates for templates in
-                           self.db_threads.values()})
+                template._store_worker = store_thread
+            self.db_threads.add(store_thread)
 
     def prepare_phases(self):
         '''
