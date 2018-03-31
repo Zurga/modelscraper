@@ -1,4 +1,4 @@
-from .workers import ScrapeWorker
+from .workers import ScrapeWorker, DummyScrapeWorker
 from multiprocessing import Queue
 from collections import defaultdict
 import sys
@@ -35,12 +35,15 @@ class Dispatcher:
 
         self.store_q.put(None)
 
-    def add_scraper(self, models):
+    def add_scraper(self, models, dummy=False):
         if type(models) != list:
             models = [models]
 
         for model in models:
-            scraper = ScrapeWorker(model)
+            if dummy:
+                scraper = DummyScrapeWorker(model)
+            else:
+                scraper = ScrapeWorker(model)
             self.scrapers[scraper.name] = scraper
 
     def print_progress(progress):
