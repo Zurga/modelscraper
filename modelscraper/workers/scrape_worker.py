@@ -15,7 +15,7 @@ from diskcache import Deque
 
 class ScrapeWorker(Process):
     def __init__(self, model):
-        super(ScrapeWorker, self).__init__()
+        super().__init__()
 
         self.source_q = Queue()
         self.parse_q = Queue()
@@ -28,13 +28,11 @@ class ScrapeWorker(Process):
         self.dbs = dict()
         self.schedule = model.schedule
         self.model = model
-        self.source_kill = None
-        self.dummy = model.dummy
         self.total_time = 0
 
-        # Start all the threads necessary for storing the data and give each
-        # template a reference to the thread it needs to store data in.
-        for thread in set(model.dbs.values()):
+        # Start all the threads necessary for storing the data
+        for thread in model.db_threads:
+            print(thread)
             thread.start()
 
     def run(self):
@@ -55,7 +53,28 @@ class ScrapeWorker(Process):
                     phase.sources = (source for source in self.to_forward)
 
                 self.to_forward = Deque()
-                self.parse_sources(phase)
+                self.feed_sources(phase, amount=phase.n_workers + 1)
+
+                source = self.consume_source()
+                while source and self.to_parse != self.parsed:
+                    self.feed_sources(phase, int(phase.n_workers / 2) + 2)
+
+                    start = time.time()
+                    # TODO add custom template if a source has a template
+                    for template in phase.templates:
+                        template.parse(source)
+                        template.to_store()
+
+                    self.total_time += time.time() - start
+                    self.parsed += 1
+
+                    for source in self._gen_sources(self.model.new_sources):
+                        self._add_source(source)
+
+                    self.model.new_sources = []
+
+                    self.show_progress()
+                    source = self.consume_source()
 
             if not phase.repeat:
                 i += 1
@@ -67,7 +86,7 @@ class ScrapeWorker(Process):
         print('Waiting for the database')
         print('Scraper fully stopped')
 
-    def consume_sources(self, phase, amount=1):
+    def feed_sources(self, phase, amount=1):
         if phase.sources:
             if type(phase.sources) == tuple or type(phase.sources) == list:
                 for source in phase.sources:
@@ -84,71 +103,28 @@ class ScrapeWorker(Process):
                         continue
                 self.to_parse += added
 
-    def parse_sources(self, phase):
-        self.consume_sources(phase, amount=phase.n_workers + 1)
+    def consume_source(self):
+        """
+        Blocking function which will poll the parse queue for a source with a
+        timeout of 10 seconds.
+        """
         while True:
-            if self.to_parse == self.parsed:
-                break
             try:
                 source = self.parse_q.get(timeout=10)
-                self.consume_sources(phase, int(phase.n_workers / 2) + 2)
-            except Empty:
-                # Break out of the while loop if there are no sources to
-                # parse and the workers are not busy retrieving a source.
-                if self.source_q.empty() and all(worker.retrieving == False
-                                                 for worker in self.workers):
-                    print('No more sources to parse at this point')
-                    break
-                else:
-                    print('Waiting for sources to parse')
-                    source = None
-
-            if source is not None:
-                start = time.time()
                 self.seen.add(source.url)
 
                 if source.compression == 'zip':
                     source.data = self._read_zip_file(source.data)
-                # TODO add custom template if a source has a template
-
-                for template in phase.templates:
-                    # Prepare the data based on multiple parsers
-                    if len(template.parser) > 1:
-                        i = 0
-                        while i < len(template.parser) - 1:
-                            parser = template.parser[i]
-                            selector = template.selector[i]
-                            source.data = parser.parse(source, template,
-                                                    selector=selector,
-                                                    gen_objects=False)
-                            i += 1
-
-                        parser = template.parser[i]
-                        if template.selector:
-                            selector = template.selector[i]
-                        else:
-                            selector = None
-                    else:
-                        selector = template.selector
-                        parser = template.parser[0]
-                    # Create the actual objects
-                    objects = parser.parse(source, template=template,
-                                           selector=selector)
-
-                    template.objects = objects
-                    if template.db:
-                        self.model.dbs[id(template)].store_q.put(
-                            template.to_store())
-                self.parsed += 1
-
-                for source in self._gen_sources(self.model.new_sources):
-                    self._add_source(source)
-
-                self.model.new_sources = []
-                self.total_time += time.time() - start
-                self.show_progress()
-
-        print('Unparsed ', self.source_q.qsize())
+                return source
+            except Empty:
+                # Break out of the while loop if there are no sources to
+                # parse and the workers are not busy retrieving a source.
+                if self.source_q.empty() and all(worker.retrieving == False
+                                                for worker in self.workers):
+                    print('No more sources to parse at this point')
+                    return False
+                else:
+                    print('Waiting for sources to parse')
 
     def _kill_workers(self):
         logging.log(logging.DEBUG, "Killing workers")
@@ -242,8 +218,7 @@ class ScrapeWorker(Process):
         return eval(expression, {}, {})
 
     def show_progress(self):
-        if not self.dummy:
-            os.system('clear')
+        os.system('clear')
         info = '''
         Domain              {}
         Phase               {}
@@ -274,3 +249,43 @@ class ScrapeWorker(Process):
     def _read_gzip_file(self, gzfile):
         with gzip.open(BytesIO(gzfile)) as fle:
             return fle.read()
+
+
+class DummyScrapeWorker(ScrapeWorker):
+    def __init__(self, model):
+        # Unset all the phase settings
+        for phase in model.phases:
+            phase.n_workers = 1
+        super().__init__(model)
+        self.to_forward = []
+        self.to_parse = 0
+        self.parsed = 0
+
+    def run(self):
+        i = 0
+        while i < len(self.model.phases):
+            phase = self.model.phases[i]
+            self.phase = i
+
+            self.spawn_workforce(phase)
+
+            if not phase.sources:
+                phase.sources = self.to_forward[:1]
+
+            self.to_forward = []
+            self.feed_sources(phase)
+            source = self.consume_source()
+            for template in phase.templates:
+                template.parse(source)
+                for obj in template.objects:
+                    print(template.name)
+                    for attr in template.attrs:
+                        print('\t', attr.name, ':', attr.value)
+
+            for source in self._gen_sources(self.model.new_sources):
+                print(source)
+                self._add_source(source)
+
+            self.model.new_sources = []
+            i += 1
+
