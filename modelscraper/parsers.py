@@ -106,20 +106,21 @@ class BaseParser:
         '''
         for data in extracted:
             # Create a new objct from the template.
-            objct = template._replicate(name=template.name, url=source.url,
-                                        func=template.func)
+            #RM objct = template._replicate(name=template.name, url=source.url,
+            #RM                            func=template.func)
+            objct = {'_url': source.url}
 
             # Set predefined attributes from the source.
             for attr in source.attrs.values():
-                objct.attrs[attr.name] = attr()
+                objct[attr.name] = attr.value
 
             no_value = 0
 
             # Set the attributes.
-            for attr in self._gen_attrs(template.attrs, objct, data):
-                objct.attrs[attr.name] = attr
+            for name, value in self._gen_attrs(template.attrs, objct, data):
+                objct[name] = value
 
-                if not attr.value:
+                if not value:
                     no_value += 1
 
             # We want to count how many attrs return None
@@ -136,12 +137,11 @@ class BaseParser:
                 else:
                     logging.log(logging.WARNING,
                                 'Template' + template.name + 'failed')
-                    #logging.log(logging.WARNING, 'data:\n' + str(data))
                     continue
 
             # Create a new Source from the template if desirable
             if template.source and getattr(self, '_source_from_object', None):
-                objct.source = template.source()
+                #TODO fix this
                 self._source_from_object(objct, source)
 
             yield objct
@@ -149,7 +149,7 @@ class BaseParser:
     def _gen_attrs(self, attrs, objct, data):
         for attr in attrs:
             if not attr.func:
-                new_attr = attr()
+                parsed = attr.value
             else:
                 elements = self._apply_selector(attr.selector, data)
 
@@ -162,14 +162,11 @@ class BaseParser:
                         'Not the same type' + attr.name + attr.type +
                         str(parsed))
 
-                new_attr = attr._replicate(name=attr.name, value=parsed,
-                                           source=attr.source)
-
                 # Create a request from the attribute if desirable
                 if attr.source and parsed:
-                    self.parent.new_sources.append((objct, new_attr))
+                    self.parent.new_sources.append((objct, attr, parsed))
 
-            yield new_attr
+            yield attr.name, parsed
 
     def _apply_funcs(self, elements, parse_funcs, kws):
         if len(parse_funcs) == 1 and hasattr(parse_funcs, '__iter__'):

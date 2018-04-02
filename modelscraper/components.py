@@ -133,9 +133,6 @@ class Template(BaseModel):
         if self.url:
             self.attrs['url'] = Attr(name='url', value=self.url)
 
-    def to_dict(self):
-        return {'url': self.url, **self.attrs_to_dict()} # noqa
-
     def attrs_to_dict(self):
         return {a.name: a.value for a in self.attrs}
 

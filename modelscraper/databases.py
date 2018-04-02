@@ -92,8 +92,7 @@ class MongoDB(BaseDatabase):
 
     #!@add_other_doc(Collection.insert_many)
     def create(self, objects, *args, **kwargs):
-        return self.coll.insert_many([obj.to_dict() for obj in objects],
-                                     *args, **kwargs)
+        return self.coll.insert_many(objects, *args, **kwargs)
 
     #!@add_other_doc(Collection.bulk_write)
     def update(self, objects, key='', method='$set', upsert=True,
@@ -102,14 +101,12 @@ class MongoDB(BaseDatabase):
             queries = self._create_queries(key, objects)
             if date:
                 date = datetime.datetime.fromtimestamp(time.time())
-                objects = ({date.isoformat(): obj.to_dict()}
+                objects = ({date.isoformat(): obj}
                            for obj in objects)
 
             # insert all the objects in the database
-            db_requests = [UpdateMany(query, {method: obj.to_dict()},
-                                      upsert=upsert) for obj, query in
-                           zip(objects, queries)]
-            print(db_requests)
+            db_requests = [UpdateMany(query, {method: obj}, upsert=upsert)
+                           for obj, query in zip(objects, queries)]
             return self.coll.bulk_write(db_requests)
         return False
 
@@ -129,9 +126,9 @@ class MongoDB(BaseDatabase):
 
     def _create_queries(self, key, objects):
         if not key:
-            return ({'url': obj.url} for obj in objects)
+            return ({'url': obj['_url']} for obj in objects)
         else:
-            return ({key: obj.attrs[key].value[0]} for obj in objects)
+            return ({key: obj[key][0]} for obj in objects)
 
 
 class ShellCommand(BaseDatabase):

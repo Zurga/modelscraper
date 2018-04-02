@@ -157,8 +157,8 @@ class ScrapeWorker(Process):
                         yield objct.attrs['url'].value
 
     def _gen_sources(self, source_list):
-        for objct, attr in source_list:
-            for value in attr.value:
+        for objct, attr, values in source_list:
+            for value in values:
                 # for now only "or" is supported.
                 if attr.source_condition and not \
                         self._evaluate_condition(objct, attr):
@@ -168,16 +168,16 @@ class ScrapeWorker(Process):
 
                 if attr.source.copy_attrs:
                     attrs_to_copy = attr.source.copy_attrs
-                    assert all(attr in objct.attrs for attr in attrs_to_copy)
+                    assert all(attr in objct for attr in attrs_to_copy)
                     if type(attrs_to_copy) == dict:
                         # We store the copied attributes under different names.
                         for key, value in attrs_to_copy.items():
-                            attrs.append(objct.attrs[key](name=value))
+                            attrs.append(objct[key](name=value))
                     else:
                         for key in attrs_to_copy:
-                            attrs.append(objct.attrs[key]())
+                            attrs.append(objct[key]())
                 if attr.source.parent:
-                    _parent = attr(name='_parent', value=(objct.url,))
+                    _parent = attr(name='_parent', value=(objct['url'],))
                     attrs.append(_parent)
 
                 yield attr.source(url=url, attrs=attrs)
