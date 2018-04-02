@@ -125,8 +125,7 @@ class BaseParser:
 
             # We want to count how many attrs return None
             # Don't return anything if we have no values for the attributes
-            if no_value == len(objct.attrs) - len(source.attrs):
-                print(source.url)
+            if no_value == len(objct) - len(source.attrs):
                 if getattr(self, '_fallback', None) and False:
                     logging.log(logging.WARNING,
                                 'Template {} has failed, attempting to' +
@@ -236,7 +235,7 @@ class BaseParser:
     def _value(self, parsed, index=None):
         if type(parsed) != list:
             parsed = list(parsed)
-        return parsed[index] if index else parsed
+        return parsed[index] if index is not None else parsed
 
 
 class HTMLParser(BaseParser):
