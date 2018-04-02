@@ -172,15 +172,15 @@ class ScrapeWorker(Process):
                     if type(attrs_to_copy) == dict:
                         # We store the copied attributes under different names.
                         for key, value in attrs_to_copy.items():
-                            attrs.append(objct[key](name=value))
+                            attrs.append(attr(name=value, value=objct[key]))
                     else:
                         for key in attrs_to_copy:
-                            attrs.append(objct[key]())
+                            attrs.append(attr(name=key, value=objct[key]))
                 if attr.source.parent:
                     _parent = attr(name='_parent', value=(objct['url'],))
                     attrs.append(_parent)
 
-                yield attr.source(url=url, attrs=attrs)
+                yield attr.source(url=value, attrs=attrs)
 
     def _add_source(self, source):
         if source.url and (source.url not in self.seen or source.duplicate) \
@@ -206,9 +206,11 @@ class ScrapeWorker(Process):
         for operator, attrs in attr.source_condition.items():
             expression += (' '+operator+' ').join(
                 [str(value) + c for name, c in attrs.items()
-                    for value in objct.attrs[name].value])
-
-        return eval(expression, {}, {})
+                    for value in objct[name]])
+        if expression:
+            return eval(expression, {}, {})
+        else:
+            return False
 
     def show_progress(self):
         os.system('clear')
@@ -270,13 +272,12 @@ class DummyScrapeWorker(ScrapeWorker):
             source = self.consume_source()
             for template in phase.templates:
                 template.parse(source)
+                print(template.name)
                 for obj in template.objects:
-                    print(template.name)
-                    for attr in template.attrs:
-                        print('\t', attr.name, ':', attr.value)
+                    for name, value in obj.items():
+                        print('\t', name, ':', value)
 
-            for source in self._gen_sources(self.model.new_sources):
-                print(source)
+            for source in self._gen_sources(self.model.new_sources[:1]):
                 self._add_source(source)
 
             self.model.new_sources = []
