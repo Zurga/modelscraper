@@ -23,7 +23,7 @@ next_page = Template(
 name_template = Template(
     name='name', db_type='MongoDB', db='names',
     table='name_count', attrs=[
-        name_count(name='name', selector='div.name', func='sel_text'),
+        Attr(name='name', selector='.name', func='sel_text'),
         name_count(name='men',
              selector='tr:nth-of-type(2) td:nth-of-type(3)'),
         name_count(name='men_second',
@@ -57,10 +57,9 @@ sources = (Source(url="http://www.meertens.knaw.nl/nvb/naam/begintmet/" + l)
 meertens = ScrapeModel(
     name='namen', domain='http://www.meertens.knaw.nl/', num_getters=5,
     phases=[
-        Phase(sources=sources,
-              templates=[name_list, next_page]
+        Phase(sources=sources, templates=[name_list, next_page]
         ),
-        Phase(templates=[
+        Phase(sources=test, templates=[
             name_template,
             data_template(selector='a[href*="absoluut/man/eerstenaam"]',
                           attrs=[data_attr, sex_attr(value='men')]),
