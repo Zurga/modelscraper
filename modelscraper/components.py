@@ -59,7 +59,7 @@ class Source(BaseModel):
     def __attrs_post_init__(self):
         # Apply the source template
         if self.src_template:
-            self.url = self.source_template.format(self.url)
+            self.url = self.src_template.format(self.url)
 
 def source_conv(source):
     if source:
