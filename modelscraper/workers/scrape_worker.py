@@ -164,7 +164,6 @@ class ScrapeWorker(Process):
                         self._evaluate_condition(objct, attr):
                         continue
 
-                url = self._apply_src_template(attr.source, value)
                 attrs = []
 
                 if attr.source.copy_attrs:
@@ -200,12 +199,6 @@ class ScrapeWorker(Process):
             if db_objct.attrs[name].value != objct.attrs[name].value:
                 return True
             return False
-
-    def _apply_src_template(self, source, url):
-        if source.src_template:
-            # use formatting notation in the src_template
-            return source.src_template.format(url)
-        return url
 
     def _evaluate_condition(self, objct, attr, **kwargs):
         expression = ''
