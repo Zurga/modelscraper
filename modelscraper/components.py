@@ -123,7 +123,7 @@ class Template(BaseModel):
     attrs = attr.ib(default=attr.Factory(dict), convert=attr_dict)
     url = attr.ib(default='')
     parser = attr.ib(default=False, convert=wrap_list)
-    _store_worker = attr.ib(init=False)
+    store_worker = attr.ib(init=False)
 
     def __attrs_post_init__(self):
         if self.db and not self.table:
@@ -137,13 +137,13 @@ class Template(BaseModel):
         return {a.name: a.value for a in self.attrs}
 
     def to_store(self):
-        if self._store_worker:
+        if self.store_worker:
             replica = self.__class__(db=self.db, table=self.table, func=self.func,
                                     db_type=self.db_type, kws=self.kws,
                                     name=self.name, url=self.url)
             if self.objects:
                 replica.objects = self.objects[:]
-            self._store_worker.store_q.put(replica)
+            self.store_worker.store_q.put(replica)
 
     def attrs_from_dict(self, attrs):
         self.attrs = attr_dict((Attr(name=name, value=value) for
@@ -233,7 +233,7 @@ class ScrapeModel:
             store_thread = getattr(databases, thread)()
 
             for template in templates:
-                template._store_worker = store_thread
+                template.store_worker = store_thread
             self.db_threads.add(store_thread)
 
     def prepare_phases(self):
