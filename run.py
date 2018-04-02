@@ -31,11 +31,7 @@ def main(model, dummy):
     imported = vars(importlib.import_module('scrape_models.%s' % model)).values()
     scrape_models = [model for model in imported
                      if type(model) == ScrapeModel]
-    if dummy:
-        for model in scrape_models:
-            print('model dummy', model.dummy)
-            model.dummy = True
-    dispatcher.add_scraper(scrape_models)
+    dispatcher.add_scraper(scrape_models, dummy=dummy)
     dispatcher.run()
 
 if __name__ == '__main__':
