@@ -3,11 +3,9 @@ from itertools import zip_longest
 
 import requests
 import attr
-from attr.validators import instance_of
 
 from .sources import WebSource
 from .parsers import HTMLParser
-from .workers.store_worker import StoreWorker
 from .helpers import selector_converter, attr_dict, str_as_tuple, wrap_list
 from . import databases
 
@@ -58,6 +56,10 @@ class Source(BaseModel):
     templates = attr.ib(attr.Factory(list))
     compression = attr.ib('')
 
+    def __attrs_post_init__(self):
+        # Apply the source template
+        if self.src_template:
+            self.url = self.source_template.format(self.url)
 
 def source_conv(source):
     if source:
@@ -111,7 +113,7 @@ class Template(BaseModel):
     db_type = attr.ib(default=None)
     objects = attr.ib(init=False)
     source = attr.ib(default=None, convert=source_conv)
-    func = attr.ib(default='create', metadata={StoreWorker: 1})
+    func = attr.ib(default='create')
     kws = attr.ib(default=attr.Factory(dict))
     name = attr.ib(default='')
     partial = attr.ib(default=False)
