@@ -123,7 +123,7 @@ class Template(BaseModel):
     attrs = attr.ib(default=attr.Factory(dict), convert=attr_dict)
     url = attr.ib(default='')
     parser = attr.ib(default=False, convert=wrap_list)
-    store_worker = attr.ib(init=False)
+    store_worker = attr.ib(default=None, init=False)
 
     def __attrs_post_init__(self):
         if self.db and not self.table:
@@ -137,13 +137,16 @@ class Template(BaseModel):
         return {a.name: a.value for a in self.attrs}
 
     def to_store(self):
-        if self.store_worker:
-            replica = self.__class__(db=self.db, table=self.table, func=self.func,
-                                    db_type=self.db_type, kws=self.kws,
-                                    name=self.name, url=self.url)
-            if self.objects:
-                replica.objects = self.objects[:]
-            self.store_worker.store_q.put(replica)
+        try:
+            if self.store_worker:
+                replica = self.__class__(db=self.db, table=self.table, func=self.func,
+                                        db_type=self.db_type, kws=self.kws,
+                                        name=self.name, url=self.url)
+                if self.objects:
+                    replica.objects = self.objects[:]
+                self.store_worker.store_q.put(replica)
+        except:
+            print(self.name, self.store_worker)
 
     def attrs_from_dict(self, attrs):
         self.attrs = attr_dict((Attr(name=name, value=value) for
@@ -159,6 +162,7 @@ class Template(BaseModel):
             while i < len(self.parser) - 1:
                 parser = self.parser[i]
                 selector = self.selector[i]
+                print('preparsing', parser, selector)
                 source.data = parser.parse(source, self,
                                         selector=selector,
                                         gen_objects=False)
@@ -219,12 +223,12 @@ class ScrapeModel:
                 template.parser = [self.parsers[p] for p in template.parser]
                 # TODO Fix the right selector with the right parser.
                 if template.selector and len(template.parser) > 1:
-                    template.selector = [parser._get_selector([selector])
+                    template.selector = [parser._get_selector(selector)
                                         for parser, selector in
                                         zip(template.parser, template.selector)]
                 else:
                     template.selector = template.parser[0]._get_selector(
-                        template.selector)
+                        template.selector[0])
             template.parser[-1]._prepare_templates(phase.templates)
 
     def set_db_threads(self, db_threads):
