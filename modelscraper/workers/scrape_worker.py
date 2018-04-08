@@ -8,6 +8,8 @@ from sys import stdout
 from threading import Event
 from zipfile import ZipFile
 import logging
+import traceback
+import sys
 
 from pybloom import ScalableBloomFilter
 from diskcache import Deque
@@ -271,11 +273,15 @@ class DummyScrapeWorker(ScrapeWorker):
             self.feed_sources(phase)
             source = self.consume_source()
             for template in phase.templates:
-                template.parse(source)
-                print(template.name)
-                for obj in template.objects:
-                    for name, value in obj.items():
-                        print('\t', name, ':', value)
+                try:
+                    template.parse(source)
+                    print(template.name)
+                    for obj in template.objects:
+                        for name, value in obj.items():
+                            print('\t', name, ':', value)
+                except Exception as E:
+                    print(E, template)
+                    print(traceback.print_tb(sys.exc_info()[-1]))
 
             for source in self._gen_sources(self.model.new_sources[:1]):
                 self._add_source(source)
