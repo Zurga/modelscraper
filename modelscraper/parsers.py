@@ -35,16 +35,16 @@ class BaseParser:
             setattr(self, key, value)
 
     def _convert_data(self, source):
-        raise NotImplementedError
+        raise NotImplementedError()
 
     def _extract(self, data, template):
-        raise NotImplementedError
+        raise NotImplementedError()
 
     def _apply_selector(self, selector, data):
-        raise NotImplementedError
+        raise NotImplementedError()
 
     def _get_selector(self, model):
-        raise NotImplementedError
+        raise NotImplementedError()
 
     def parse(self, source, template, selector=None, gen_objects=True):
         '''
@@ -54,12 +54,6 @@ class BaseParser:
         '''
 
         data = self._convert_data(source.data)
-
-        # if source.templates:
-        #    templates = source.templates
-        # else:
-        #    templates = self.templates
-
         extracted = self._extract(data, selector)
         if not extracted:
             logging.log(logging.WARNING, "{selector} selector of template: " +
@@ -79,9 +73,10 @@ class BaseParser:
 
     def _prepare_templates(self, templates):
         for template in templates:
-            for attr in template.attrs.values():
+            for attr in template.attrs:
                 attr.func = self._get_funcs(attr.func)
-                attr.selector = self._get_selector(attr.selector)
+                attr.selector = str_as_tuple(self._get_selector(attr.selector[0]))
+                print(attr.selector, 'pepare')
 
     def _get_funcs(self, func_names):
         functions = []
@@ -105,9 +100,6 @@ class BaseParser:
         _source_from_object).
         '''
         for data in extracted:
-            # Create a new objct from the template.
-            #RM objct = template._replicate(name=template.name, url=source.url,
-            #RM                            func=template.func)
             objct = {'_url': source.url}
 
             # Set predefined attributes from the source.
@@ -140,7 +132,6 @@ class BaseParser:
 
             # Create a new Source from the template if desirable
             if template.source and getattr(self, '_source_from_object', None):
-                #TODO fix this
                 self._source_from_object(objct, source)
 
             yield objct
@@ -151,8 +142,6 @@ class BaseParser:
                 parsed = attr.value
             else:
                 elements = self._apply_selector(attr.selector, data)
-
-                # get the parse functions and recursively apply them.
                 parsed = self._apply_funcs(elements, attr.func, attr.kws)
 
                 if attr.type and type(parsed) != attr.type:
@@ -160,7 +149,6 @@ class BaseParser:
                         logging.WARNING,
                         'Not the same type' + attr.name + attr.type +
                         str(parsed))
-
                 # Create a request from the attribute if desirable
                 if attr.source and parsed:
                     self.parent.new_sources.append((objct, attr, parsed))
@@ -270,7 +258,6 @@ class HTMLParser(BaseParser):
             if type(selector) in (CSSSelector, XPath):
                 return selector
             else:
-                selector = ' '.join(selector).strip()
                 try:
                     return CSSSelector(selector)
                 except SelectorSyntaxError:
@@ -282,6 +269,7 @@ class HTMLParser(BaseParser):
 
     def _apply_selector(self, selector, data):
         if selector:
+            print(selector)
             return selector(data)
         else:
             return (data,)
@@ -491,6 +479,7 @@ class JSONParser(BaseParser):
         return ''.join(data).encode('utf8')
 
     def _apply_selector(self, selector, data):
+        print(selector)
         while selector and data:
             cur_sel = selector[0]
             if type(data) == dict:
@@ -514,7 +503,7 @@ class JSONParser(BaseParser):
         return data
 
     def _get_selector(self, selector):
-        return str_as_tuple(selector)
+        return selector
 
     @add_other_doc(BaseParser._sel_text)
     def sel_text(self, elements, **kwargs):  # noqa
