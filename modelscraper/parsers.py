@@ -490,7 +490,12 @@ class JSONParser(BaseParser):
                     data = None
             elif type(data) == list:
                 if type(cur_sel) == int:
-                    data = data[cur_sel]
+                    try:
+                        data = data[cur_sel]
+                    except IndexError:
+                        logging.log(logging.WARNING,
+                                    'Selector index is too large. ' +
+                                    str(cur_sel) + str(data))
                 else:
                     data = self._flatten(data)
                     data = [d.get(cur_sel, []) for d in data
