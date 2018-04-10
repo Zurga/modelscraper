@@ -11,7 +11,8 @@ base_url = 'https://www.ah.nl/{}'
 delegate_url = 'https://www.ah.nl/service/rest/delegate?url={}'
 search = (Source(url=base_search.format(l)) for l in string.ascii_lowercase)
 
-product_selector = [4, '_embedded', 'items', 0,'_embedded','product']
+product_selector = ['type:ProductDetailLane', '_embedded', 'items',
+                    0, '_embedded','product']
 
 product = Template(
     name='product',
