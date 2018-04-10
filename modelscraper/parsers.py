@@ -478,8 +478,7 @@ class JSONParser(BaseParser):
     def _apply_selector(self, selector, data):
         while selector and data:
             cur_sel = selector[0]
-            if cur_sel == '*' and type(data) is list:
-                return [data]
+
             if type(data) == dict:
                 if cur_sel in data:
                     data = data[cur_sel]
@@ -496,6 +495,15 @@ class JSONParser(BaseParser):
                         logging.log(logging.WARNING,
                                     'Selector index is too large. ' +
                                     str(cur_sel) + str(data))
+                elif cur_sel == '*':
+                    return [data]
+                # Perform key value search in the next object
+                elif ':' in cur_sel:
+                    key, val = cur_sel.split(':')
+                    for d in data:
+                        if d.get(key) == val:
+                            data = d
+                            break
                 else:
                     data = self._flatten(data)
                     data = [d.get(cur_sel, []) for d in data
