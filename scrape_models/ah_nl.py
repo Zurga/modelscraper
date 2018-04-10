@@ -19,9 +19,9 @@ product = Template(
     table='products',
     selector=['_embedded', 'lanes', '*'],
     attrs=[
-        # nutrition(func='sel_text',
-        #     selector=[8, '_embedded', 'items', 1,'_embedded','sections',0,
-        #               '_embedded', 'content', 2, 'text', 'body']),
+        nutrition(func='sel_text',
+            selector=[8, '_embedded', 'items', 1,'_embedded','sections',0,
+                      '_embedded', 'content', 2, 'text', 'body']),
 
         product_name(selector=product_selector + ['description']),
         brand_name(selector=product_selector + ['brandName']),
