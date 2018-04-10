@@ -6,7 +6,7 @@ import attr
 
 from .sources import WebSource
 from .parsers import HTMLParser
-from .helpers import selector_converter, attr_dict, str_as_tuple, wrap_list
+from .helpers import selector_converter, attr_dict, str_as_tuple, wrap_list, depth
 from . import databases
 
 
@@ -75,7 +75,7 @@ class Attr(BaseModel):
     The value for the attribute is obtained by applying the func
     on the element obtained through the selector.
     '''
-    selector = attr.ib(default=None, convert=str_as_tuple)
+    selector = attr.ib(default=None)
     name = attr.ib(default=None)
     value = attr.ib(default=None)
     func = attr.ib(default=None, convert=str_as_tuple,
@@ -118,12 +118,12 @@ class Template(BaseModel):
     name = attr.ib(default='')
     partial = attr.ib(default=False)
     required = attr.ib(default=False)
-    selector = attr.ib(default=None, convert=str_as_tuple)
+    selector = attr.ib(default=None)
     args = attr.ib(default=tuple)
     attrs = attr.ib(default=attr.Factory(dict), convert=attr_dict)
     url = attr.ib(default='')
     parser = attr.ib(default=False, convert=wrap_list)
-    store_worker = attr.ib(default=None, init=False)
+    store_worker = attr.ib(init=False)
 
     def __attrs_post_init__(self):
         if self.db and not self.table:
@@ -137,16 +137,13 @@ class Template(BaseModel):
         return {a.name: a.value for a in self.attrs}
 
     def to_store(self):
-        try:
-            if self.store_worker:
-                replica = self.__class__(db=self.db, table=self.table, func=self.func,
-                                        db_type=self.db_type, kws=self.kws,
-                                        name=self.name, url=self.url)
-                if self.objects:
-                    replica.objects = self.objects[:]
-                self.store_worker.store_q.put(replica)
-        except:
-            print(self.name, self.store_worker)
+        if getattr(self, 'store_worker', False):
+            replica = self.__class__(db=self.db, table=self.table, func=self.func,
+                                    db_type=self.db_type, kws=self.kws,
+                                    name=self.name, url=self.url)
+            if self.objects:
+                replica.objects = self.objects[:]
+            self.store_worker.store_q.put(replica)
 
     def attrs_from_dict(self, attrs):
         self.attrs = attr_dict((Attr(name=name, value=value) for
@@ -156,28 +153,40 @@ class Template(BaseModel):
         attr = Attr(name=name, value=value, **kwargs)
         self.attrs[attr.name] = attr
 
+    def prepare(self, parsers):
+        self.parser = [parsers[p] for p in self.parser]
+        if self.selector:
+            if len(self.parser) > 1:
+                self.selector = [parser.get_selector(selector)
+                                for parser, selector in
+                                zip_longest(self.parser, self.selector)]
+            else:
+                self.selector = [self.parser[0].get_selector(self.selector)]
+        # Set the functions of the attrs
+        parser = self.parser[-1]
+        for attr in self.attrs:
+            attr.func = parser.get_funcs(attr.func)
+            if attr.selector:
+                attr.selector = parser.get_selector(attr.selector)
+
     def parse(self, source):
         if len(self.parser) > 1:
-            i = 0
-            while i < len(self.parser) - 1:
-                parser = self.parser[i]
-                selector = self.selector[i]
-                print('preparsing', parser, selector)
+            for parser, selector in zip(self.parser[:-1], self.selector[:-1]):
+                print(parser, selector)
                 source.data = parser.parse(source, self,
                                         selector=selector,
                                         gen_objects=False)
-                i += 1
 
-            parser = self.parser[i]
-            if self.selector:
-                selector = self.selector[i]
-            else:
-                selector = None
+            parser = self.parser[-1]
         else:
             parser = self.parser[0]
+        if self.selector:
+            selector = self.selector[-1]
+        else:
+            selector = None
         # Create the actual objects
         self.objects = parser.parse(source, template=self,
-                                selector=self.selector)
+                                selector=selector)
 
     '''
     def __repr__(self):
@@ -220,16 +229,8 @@ class ScrapeModel:
 
         for phase in self.phases:
             for template in phase.templates:
-                template.parser = [self.parsers[p] for p in template.parser]
+                template.prepare(self.parsers)
                 # TODO Fix the right selector with the right parser.
-                if template.selector and len(template.parser) > 1:
-                    template.selector = [parser._get_selector(selector)
-                                        for parser, selector in
-                                        zip(template.parser, template.selector)]
-                else:
-                    template.selector = template.parser[0]._get_selector(
-                        template.selector[0])
-            template.parser[-1]._prepare_templates(phase.templates)
 
     def set_db_threads(self, db_threads):
         self.db_threads = set()
