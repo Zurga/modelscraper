@@ -105,6 +105,9 @@ class BaseParser:
                 objct[name] = value
 
                 if not value:
+                    logging.log(logging.WARNING, "no value for " + name +
+                                "for template {template}".format(
+                                    name=name, template=template.name))
                     no_value += 1
 
             # We want to count how many attrs return None
@@ -179,7 +182,7 @@ class BaseParser:
         return new_source
 
     def modify_text(self, text, replacers=None, substitute='', regex: str='',
-                numbers: bool=False, needle=None):
+                numbers: bool=False, needle=None, template=''):
         """
         replacers: string or list of values/regular expressions that have to be
             replaced in the text. Used in combination with substitute.
@@ -200,8 +203,10 @@ class BaseParser:
                 return [None]
 
         if numbers:
-            text = [int(''.join([c for c in t if c.isdigit() and c]))
-                    for t in text if t and any(map(str.isdigit, t))]
+            text = (int(''.join([c for c in t if c.isdigit() and c]))
+                    for t in text if t and any(map(str.isdigit, t)))
+        if template:
+            text = (template.format(t) for t in text)
         return text
 
     def _sel_text(self, text, index=None, **kwargs):
@@ -473,12 +478,14 @@ class JSONParser(BaseParser):
     def _apply_selector(self, selector, data):
         while selector and data:
             cur_sel = selector[0]
+            if cur_sel == '*' and type(data) is list:
+                return [data]
             if type(data) == dict:
                 if cur_sel in data:
                     data = data[cur_sel]
                 else:
                     logging.log(logging.WARNING, 'JSONPARSER.apply_selector' +
-                                ' failed at selector ' + str(cur_sel) + ' ' +
+                                ' failed at selector ' + str(cur_sel) + ' for ' +
                                 str(selector) + ' ' +str(data))
                     data = None
             elif type(data) == list:
@@ -488,6 +495,8 @@ class JSONParser(BaseParser):
                     data = self._flatten(data)
                     data = [d.get(cur_sel, []) for d in data
                             if type(d) == dict]
+            else:
+                logging.log(logging.WARNING, 'something is off ' + cur_sel)
             selector = selector[1:]
         if type(data) != list:
             return [data]
@@ -500,7 +509,7 @@ class JSONParser(BaseParser):
     def sel_text(self, elements, **kwargs):  # noqa
         return self._sel_text(elements, **kwargs)
 
-    def sel_dict(self, elements):
+    def sel_value(self, elements):
         return elements
 
 
