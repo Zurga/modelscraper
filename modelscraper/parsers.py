@@ -9,7 +9,7 @@ from lxml.etree import XPath, XMLSyntaxError
 from lxml.cssselect import CSSSelector, SelectorSyntaxError
 from scrapely import Scraper
 
-from .helpers import str_as_tuple, add_other_doc
+from .helpers import str_as_tuple, add_other_doc, wrap_list
 
 
 class BaseParser:
@@ -21,14 +21,13 @@ class BaseParser:
     which can all be overridden in subclasses.
     '''
 
-    def __init__(self, parent=None, templates=[], **kwargs):
+    def __init__(self, parent=None, **kwargs):
         if not parent:
             raise Exception('No parent or phase was specified')
         self.name = parent.name
         self.domain = parent.domain
         # Set all selectors and the functions of the attrs to the correct
         # functions and selectors of the parser.
-        self._prepare_templates(templates)
         self.parent = parent
 
         for key, value in kwargs.items():
@@ -43,7 +42,7 @@ class BaseParser:
     def _apply_selector(self, selector, data):
         raise NotImplementedError()
 
-    def _get_selector(self, model):
+    def get_selector(self, model):
         raise NotImplementedError()
 
     def parse(self, source, template, selector=None, gen_objects=True):
@@ -71,14 +70,7 @@ class BaseParser:
 
         return objects
 
-    def _prepare_templates(self, templates):
-        for template in templates:
-            for attr in template.attrs:
-                attr.func = self._get_funcs(attr.func)
-                attr.selector = str_as_tuple(self._get_selector(attr.selector[0]))
-                print(attr.selector, 'pepare')
-
-    def _get_funcs(self, func_names):
+    def get_funcs(self, func_names):
         functions = []
         try:
             if func_names:
@@ -253,7 +245,8 @@ class HTMLParser(BaseParser):
             data.make_links_absolute(self.domain)
             return data
 
-    def _get_selector(self, selector):
+    def get_selector(self, selector):
+        assert type(selector) is str, "selector is not a string %r" %selector
         if selector:
             if type(selector) in (CSSSelector, XPath):
                 return selector
@@ -269,7 +262,6 @@ class HTMLParser(BaseParser):
 
     def _apply_selector(self, selector, data):
         if selector:
-            print(selector)
             return selector(data)
         else:
             return (data,)
@@ -479,7 +471,6 @@ class JSONParser(BaseParser):
         return ''.join(data).encode('utf8')
 
     def _apply_selector(self, selector, data):
-        print(selector)
         while selector and data:
             cur_sel = selector[0]
             if type(data) == dict:
@@ -502,8 +493,8 @@ class JSONParser(BaseParser):
             return [data]
         return data
 
-    def _get_selector(self, selector):
-        return selector
+    def get_selector(self, selector):
+        return wrap_list(selector)
 
     @add_other_doc(BaseParser._sel_text)
     def sel_text(self, elements, **kwargs):  # noqa
@@ -528,7 +519,7 @@ class TextParser(BaseParser):
             return data.split(selector)
         return data
 
-    def _get_selector(self, selector):
+    def get_selector(self, selector):
         return str_as_tuple(selector)
 
     @add_other_doc(BaseParser._sel_text)
@@ -554,7 +545,7 @@ class CSVParser(BaseParser):
             return [data[selector[0]]]
         return data
 
-    def _get_selector(self, selector):
+    def get_selector(self, selector):
         return selector
 
     @add_other_doc(BaseParser._sel_text)
