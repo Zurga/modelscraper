@@ -259,11 +259,7 @@ class DummyScrapeWorker(ScrapeWorker):
         self.parsed = 0
 
     def run(self):
-        i = 0
-        while i < len(self.model.phases):
-            phase = self.model.phases[i]
-            self.phase = i
-
+        for phase in self.model.phases:
             self.spawn_workforce(phase)
 
             if not phase.sources:
@@ -287,5 +283,3 @@ class DummyScrapeWorker(ScrapeWorker):
                 self._add_source(source)
 
             self.model.new_sources = []
-            i += 1
-
