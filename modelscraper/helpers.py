@@ -87,3 +87,10 @@ def add_other_doc(other_func):
             func.__doc__ = other_func.__doc__
         return func
     return _doc
+
+
+def depth(l):
+    if isinstance(l, list):
+        return 1 + max(depth(item) for item in l)
+    else:
+        return 0
