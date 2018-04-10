@@ -48,7 +48,7 @@ search_template = Template(
     db_type='MongoDB',
     db='ah_nl',
     table='product_urls',
-    selector=['_embedded', 'lanes', 6, '_embedded', 'items'],
+    selector=['_embedded', 'lanes', 'type:SearchLane', '_embedded', 'items'],
     attrs=[product_url]
 )
 
