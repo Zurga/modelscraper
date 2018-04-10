@@ -123,7 +123,6 @@ class Template(BaseModel):
     attrs = attr.ib(default=attr.Factory(dict), convert=attr_dict)
     url = attr.ib(default='')
     parser = attr.ib(default=False, convert=wrap_list)
-    store_worker = attr.ib(init=False)
 
     def __attrs_post_init__(self):
         if self.db and not self.table:
