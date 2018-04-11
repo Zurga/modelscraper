@@ -1,0 +1,12 @@
+dicttoxml
+scrapely
+cssselect
+pymongo
+attrs
+requests
+lxml
+diskcache
+pybloom
+user_agent
+click
+xmljson
