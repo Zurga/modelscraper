@@ -13,7 +13,7 @@ table_trans = str.maketrans('[]', '<>')
 search = (Source(url=base_search.format(l)) for l in ascii_lowercase)
 
 product_selector = '//type[text() = "ProductDetailLane"]/..//type[text() = "Product"]/..'
-paragraph_selector = '//content//title[text() = "{}"]/../../../item[last()]/text/body'
+paragraph_selector = '//content//title[text() = "{}"]/../../../content[last()]/text/body'
 product = Template(
     name='product',
     db='ah_nl',
@@ -49,7 +49,7 @@ search_template = Template(
     db_type='MongoDB',
     db='ah_nl',
     table='product_urls',
-    selector='//type[text() = "SearchLane"]/../_embedded/items/item',
+    selector='//type[text() = "SearchLane"]/../_embedded/items',
     attrs=[product_url]
 )
 
