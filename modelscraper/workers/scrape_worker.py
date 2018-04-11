@@ -279,7 +279,10 @@ class DummyScrapeWorker(ScrapeWorker):
                     print(E, template)
                     print(traceback.print_tb(sys.exc_info()[-1]))
 
-            for source in self._gen_sources(self.model.new_sources[:1]):
-                self._add_source(source)
+            print('generated', len(self.model.new_sources), 'new sources')
+            for source in self._gen_sources(self.model.new_sources[:]):
+                if source.active == False:
+                    self._add_source(source)
+            print('forwarded', len(self.to_forward))
 
             self.model.new_sources = []
