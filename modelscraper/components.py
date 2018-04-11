@@ -263,7 +263,8 @@ class ScrapeModel:
         for attr in template.attrs:
             if attr.func:
                 for func in attr.func:
-                    if not getattr(phase.parser, func, False):
+                    if type(func) is str and not getattr(phase.parser, func,
+                                                         False):
                         not_implemented.append(func)
 
         if not_implemented:
