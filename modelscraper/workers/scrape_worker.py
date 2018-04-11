@@ -11,7 +11,7 @@ import logging
 import traceback
 import sys
 
-from pybloom import ScalableBloomFilter
+from pybloom_live import ScalableBloomFilter
 from diskcache import Deque
 
 
