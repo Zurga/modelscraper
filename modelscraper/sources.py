@@ -1,8 +1,9 @@
 from threading import Thread
 import time
-from user_agent import generate_user_agent
 import requests
 import subprocess
+
+from user_agent import generate_user_agent
 
 
 class BaseSourceWorker(Thread):
