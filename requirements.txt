@@ -6,7 +6,7 @@ attrs
 requests
 lxml
 diskcache
-pybloom
+pybloom-live
 user_agent
 click
 xmljson
