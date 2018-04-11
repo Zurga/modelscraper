@@ -31,3 +31,7 @@ store_id = Attr(
 category = Attr(
     name='category',
     func='sel_text')
+
+ingredients = Attr(
+    name='ingredients',
+    func='sel_text')
