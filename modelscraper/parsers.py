@@ -5,9 +5,12 @@ import re
 import logging
 
 import lxml.html as lxhtml
-from lxml.etree import XPath, XMLSyntaxError
-from lxml.cssselect import CSSSelector, SelectorSyntaxError
+import lxml.etree as etree
+from lxml.cssselect import CSSSelector
+from cssselect import SelectorSyntaxError
+
 from scrapely import Scraper
+import dicttoxml
 
 from .helpers import str_as_tuple, add_other_doc, wrap_list
 
@@ -253,30 +256,38 @@ class HTMLParser(BaseParser):
     def get_selector(self, selector):
         assert type(selector) is str, "selector is not a string %r" %selector
         if selector:
-            if type(selector) in (CSSSelector, XPath):
+            if type(selector) in (CSSSelector, etree.XPath):
                 return selector
             else:
                 try:
                     return CSSSelector(selector)
                 except SelectorSyntaxError:
-                    return XPath(selector)
-                except:
-                    raise Exception('Not a valid css or xpath selector',
-                                    selector)
+                    try:
+                        return etree.XPath(selector)
+                    except etree.XPathSyntaxError:
+                        raise Exception('Not a valid css or xpath selector',
+                                        selector)
+
         return None
+
+    def custom_func(self, elements, function, selector=""):
+        elements = (lxhtml.fromstring(function(el)) for el in elements)
+        if selector:
+            selector = self.get_selector(selector)
+            selected = [s for el in elements for s in selector(el)]
+            return selected
+        return list(elements)
 
     def _apply_selector(self, selector, data):
         if selector:
-            return selector(data)
-        else:
-            return (data,)
+            result = selector(data)
+            return result
+        return (data,)
 
     def _extract(self, html, selector):
         if html is not None:
-            extracted = self._apply_selector(selector, html)
-        else:
-            extracted = []
-        return extracted
+            return self._apply_selector(selector, html)
+        return []
 
     def to_string(self, data):
         return ''.join(data.to_string())
@@ -330,11 +341,11 @@ class HTMLParser(BaseParser):
                 yield objct
         return []
 
-    def _convert_to_element(self, parsed):
+    def _convert_to_element(self, parsed, elem_type='p'):
         elements = []
         for p in parsed:
             if not type(p) == lxhtml.HtmlElement:
-                elem = lxhtml.Element('p')
+                elem = lxhtml.Element(elem_type)
                 elem.text = p
                 elements.append(elem)
         return elements
@@ -345,9 +356,9 @@ class HTMLParser(BaseParser):
         Select all text for a given selector.
         '''
         if all_text:
-            text = [el.text_content() for el in elements]
+            text = (el.text_content() for el in elements)
         else:
-            text = [el.text for el in elements]
+            text = (el.text for el in elements)
         return self._sel_text(text, **kwargs)
 
     def sel_table(self, elements, columns: int=2, offset: int=0):
@@ -446,85 +457,12 @@ class HTMLParser(BaseParser):
                 source.data = data
             self.parent._add_source(source)
 
-
-class JSONParser(BaseParser):
-    def __init__(self, **kwargs):
-        super(JSONParser, self).__init__(**kwargs)
-
-    def _flatten(self, lis):
-        new_list = []
-        for item in lis:
-            if type(item) == list:
-                new_list.extend(self._flatten(item))
-            else:
-                new_list.append(item)
-        return new_list
-
+class JSONParser(HTMLParser):
     def _convert_data(self, data):
-        return json.loads(data)
+        return etree.fromstring(dicttoxml.dicttoxml(json.loads(data)))
 
-    def _extract(self, data, selector):
-        # TODO add the possibility to parse lists
-        if selector:
-            return self._apply_selector(selector, data)
-        else:
-            if type(data) != list:
-                return [data]
-            return data
-
-    def to_string(self, data):
-        return ''.join(data).encode('utf8')
-
-    def _apply_selector(self, selector, data):
-        while selector and data:
-            cur_sel = selector[0]
-
-            if type(data) == dict:
-                if cur_sel in data:
-                    data = data[cur_sel]
-                else:
-                    logging.log(logging.WARNING, 'JSONPARSER.apply_selector' +
-                                ' failed at selector ' + str(cur_sel) + ' for ' +
-                                str(selector) + ' ' +str(data))
-                    data = None
-            elif type(data) == list:
-                if type(cur_sel) == int:
-                    try:
-                        data = data[cur_sel]
-                    except IndexError:
-                        logging.log(logging.WARNING,
-                                    'Selector index is too large. ' +
-                                    str(cur_sel) + str(data))
-                elif cur_sel == '*':
-                    return [data]
-                # Perform key value search in the next object
-                elif ':' in cur_sel:
-                    key, val = cur_sel.split(':')
-                    for d in data:
-                        if d.get(key) == val:
-                            data = d
-                            break
-                else:
-                    data = self._flatten(data)
-                    data = [d.get(cur_sel, []) for d in data
-                            if type(d) == dict]
-            else:
-                logging.log(logging.WARNING, 'something is off ' + cur_sel)
-            selector = selector[1:]
-        if type(data) != list:
-            return [data]
-        return data
-
-    def get_selector(self, selector):
-        return wrap_list(selector)
-
-    @add_other_doc(BaseParser._sel_text)
-    def sel_text(self, elements, **kwargs):  # noqa
-        return self._sel_text(elements, **kwargs)
-
-    def sel_value(self, elements):
-        return elements
-
+    def sel_text(self, elements, **kwargs):
+        return self._sel_text((el.text for el in elements), **kwargs)
 
 class TextParser(BaseParser):
     def __init__(self, **kwargs):
