@@ -10,7 +10,7 @@ from lxml.cssselect import CSSSelector
 from cssselect import SelectorSyntaxError
 
 from scrapely import Scraper
-import dicttoxml
+import xmljson
 
 from .helpers import str_as_tuple, add_other_doc, wrap_list
 
@@ -459,7 +459,8 @@ class HTMLParser(BaseParser):
 
 class JSONParser(HTMLParser):
     def _convert_data(self, data):
-        return etree.fromstring(dicttoxml.dicttoxml(json.loads(data)))
+        xml = xmljson.badgerfish.etree(json.loads(data), root=etree.Element('root'))
+        return xml
 
     def sel_text(self, elements, **kwargs):
         return self._sel_text((el.text for el in elements), **kwargs)
