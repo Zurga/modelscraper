@@ -18,6 +18,7 @@ product = Template(
     name='product',
     db='ah_nl',
     table='products',
+    db_type='MongoDB',
     attrs=[
         nutrition(
             func=['sel_text', 'custom_func', 'sel_table'],
