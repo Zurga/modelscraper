@@ -128,7 +128,9 @@ class Template(BaseModel):
         if self.db and not self.table:
             raise Exception(self.name +
                 'Database name is set, but not the table')
-
+        elif self.db and not self.db_type:
+            raise Exception(self.name +
+                'Database name is set, but not the database type')
         if self.url:
             self.attrs['url'] = Attr(name='url', value=self.url)
 
