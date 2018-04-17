@@ -14,6 +14,8 @@ import sys
 from pybloom_live import ScalableBloomFilter
 from diskcache import Deque
 
+from ..components import Attr
+
 
 class ScrapeWorker(Process):
     def __init__(self, model):
@@ -174,12 +176,12 @@ class ScrapeWorker(Process):
                     if type(attrs_to_copy) == dict:
                         # We store the copied attributes under different names.
                         for key, value in attrs_to_copy.items():
-                            attrs.append(attr(name=value, value=objct[key]))
+                            attrs.append(Attr(name=value, value=objct[key]))
                     else:
                         for key in attrs_to_copy:
-                            attrs.append(attr(name=key, value=objct[key]))
+                            attrs.append(Attr(name=key, value=objct[key]))
                 if attr.source.parent:
-                    _parent = attr(name='_parent', value=(objct['url'],))
+                    _parent = Attr(name='_parent', value=(objct['url'],))
                     attrs.append(_parent)
 
                 yield attr.source(url=value, attrs=attrs)
