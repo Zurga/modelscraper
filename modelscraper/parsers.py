@@ -130,7 +130,7 @@ class BaseParser:
 
             # Create a new Source from the template if desirable
             if template.source and getattr(self, '_source_from_object', None):
-                self._source_from_object(objct, source)
+                self._source_from_object(template, objct, source)
 
             yield objct
 
@@ -292,15 +292,14 @@ class HTMLParser(BaseParser):
     def to_string(self, data):
         return ''.join(data.to_string())
 
-    def _source_from_object(self, objct, source):
+    def _source_from_object(self, template, objct, source):
         # TODO fix that the source object can determine for itself where data
         # or params should be placed in the object.
-        new_source = objct.source._replicate()
-        attrs = {attr.name: attr.value for attr in objct.attrs.values()
-                    if attr.name != 'url'}
+        new_source = template.source._replicate()
+        attrs = {name: value for name, value in objct.items() if name != 'url'}
 
         if not getattr(new_source, 'url', None):
-            url = objct.attrs.get('url')
+            url = objct.get('url')
 
             if url and not isinstance(url, list):
                 new_source.url = self.parent._apply_src_template(source,
@@ -313,7 +312,7 @@ class HTMLParser(BaseParser):
             new_source = self._copy_attrs(objct, new_source)
 
         if new_source.parent:
-            new_source.attrs['_parent'] = objct.attrs['url']._replicate()
+            new_source.attrs['_parent'] = objct['_url']
 
         if new_source.method == 'post':
             new_source.data = {**new_source.data, **attrs} # noqa
