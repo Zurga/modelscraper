@@ -5,8 +5,8 @@ from collections import defaultdict
 from multiprocessing import Process
 from queue import Queue, Empty
 from sys import stdout
-from threading import Event
 from zipfile import ZipFile
+from threading import Lock
 import logging
 import traceback
 import sys
@@ -33,6 +33,7 @@ class ScrapeWorker(Process):
         self.schedule = model.schedule
         self.model = model
         self.total_time = 0
+        self.lock = Lock()
 
         # Start all the threads necessary for storing the data
         for thread in model.db_threads:
@@ -148,8 +149,12 @@ class ScrapeWorker(Process):
         else:
             n_workers = self.model.num_getters
 
-        self.workers = [phase.source_worker(parent=self, id=i)
-                   for i in range(n_workers)]
+        self.workers = [phase.source_worker(in_q=self.source_q,
+                                            out_q=self.parse_q,
+                                            lock=self.lock,
+                                            to_parse=self.to_parse,
+                                            id=i)
+                        for i in range(n_workers)]
         for worker in self.workers:
             worker.start()
 
