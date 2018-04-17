@@ -7,17 +7,17 @@ from user_agent import generate_user_agent
 
 
 class BaseSourceWorker(Thread):
-    def __init__(self, parent=None, id=0, stop_event=None):
+    def __init__(self, in_q, out_q, lock, to_parse, id=0):
         super().__init__()
-        if parent:
-            self.id  = id
-            self.in_q = parent.source_q
-            self.out_q = parent.parse_q
-            self.parent = parent
+        self.id  = id
+        self.in_q = in_q
+        self.out_q = out_q
+        self.lock = lock
         self.mean = 0
         self.total_time = 0
         self.visited = 0
         self.retrieving = False
+        self.to_parse = to_parse
 
     def __call__(self, **kwargs):
         return self.__class__(**kwargs, **self.inits)  # noqa
@@ -30,19 +30,25 @@ class BaseSourceWorker(Thread):
             if source is None:
                 break
             self.retrieving = True
-            source = self.retrieve(source)
-            # source = self.retrieve(self.in_q.get())
+            source, increment = self.retrieve(source)
+            self.visited += 1
+
             if source:
                 self.out_q.put(source)
-            self.visited += 1
-            self.total_time += time.time() - start
-            self.mean = self.total_time / self.visited
+
+            with self.lock:
+                self.to_parse += increment
+
             self.in_q.task_done()
             self.retrieving = False
         print('Done')
 
     def retrieve(self):
         raise NotImplementedError
+
+    def _recalculate_mean(self, start):
+        self.total_time += time.time() - start
+        return self.total_time / self.visited
 
 
 class WebSource(BaseSourceWorker):
@@ -51,18 +57,18 @@ class WebSource(BaseSourceWorker):
     It will place all items in its queue into the out_q specified.
     For use without parent Thread supply keyword arguments: name, domain, in_q,
     '''
-    def __init__(self, time_out=0.3, retries=10, **kwargs):
+    def __init__(self, time_out=0.3, retries=10, session=requests.Session(),
+                 user_agent='', **kwargs):
         super().__init__(**kwargs)
-        self.domain = self.parent.model.domain
-        self.name = self.parent.name + 'WebSource ' + str(self.id)
+        self.name = 'WebSource ' + str(self.id)
         self.retries = retries
-        self.session = self.parent.model.session
+        self.session = session
         self.time_out = time_out
-        self.times = []
-        self.to_parse = self.parent.to_parse
-        self.user_agent = self.parent.model.user_agent
-
-        self.connection_errors = []
+        self.user_agent = user_agent
+        self.inits = {'session': session,
+                      'time_out': time_out,
+                      'retries': retries,
+                      'user_agent': user_agent}
 
     def retrieve(self, source):
         headers = {'User-Agent': generate_user_agent()
@@ -75,27 +81,27 @@ class WebSource(BaseSourceWorker):
                         params=source.params,
                         headers={**headers, # noqa
                                     **source.headers})
+
         # Retry later with a timeout,
         except requests.Timeout:
-            # print('timeout')
             self.in_q.put(source)
+            return False, 0
 
         # Retry later with connection error.
         except requests.ConnectionError:
-            # print('connection error')
             self.in_q.put(source)
-
             time.sleep(self.time_out)
+            return False, 0
 
         except Exception as E:
             print(self.__class__.__name__, id(self), E)
-            self.to_parse -= 1
+            return False, -1
         else:
             if page and source.parse:
                 source.data = page.text
-                return source
+                return source, 1
             else:
-                self.to_parse -= 1
+                return False, -1
 
 
 class FileSource(BaseSourceWorker):
@@ -103,9 +109,12 @@ class FileSource(BaseSourceWorker):
         super().__init__(**kwargs)
 
     def retrieve(self, source):
-        with open(source.url) as fle:
-            source.data = fle.read()
-        return source
+        try:
+            with open(source.url) as fle:
+                source.data = fle.read()
+        except FileNotFoundError:
+            return False, -1
+        return source, 1
 
 
 class ProgramSource(BaseSourceWorker):
@@ -118,7 +127,7 @@ class ProgramSource(BaseSourceWorker):
         result = subprocess.run(self.function + source.url, shell=True,
                                 stdout=subprocess.PIPE)
         source.data = result.stdout.decode('utf-8')
-        return source
+        return source, 1
 
 
 class APISource(BaseSourceWorker):
