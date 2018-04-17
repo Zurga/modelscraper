@@ -267,7 +267,9 @@ class DummyScrapeWorker(ScrapeWorker):
 
             self.to_forward = []
             self.feed_sources(phase)
+            print(self.to_parse, 'sources in queue')
             source = self.consume_source()
+            print(source.url)
             for template in phase.templates:
                 try:
                     template.parse(source)
