@@ -125,12 +125,20 @@ class Template(BaseModel):
     parser = attr.ib(default=False, convert=wrap_list)
 
     def __attrs_post_init__(self):
-        if self.db and not self.table:
-            raise Exception(self.name +
-                'Database name is set, but not the table')
+        if type(self.db_type) is str and self.db_type and self.db and self.table:
+            database_class = getattr(databases, self.db_type)
+            if database_class:
+                self.db_type = database_class
+            else:
+                raise Exception(self.db + 'This database is not supported')
+
         elif self.db and not self.db_type:
             raise Exception(self.name +
                 'Database name is set, but not the database type')
+
+        elif self.db and not self.table and self.db_type:
+            raise Exception(self.name +
+                'Database name is set, but not the table')
         if self.url:
             self.attrs['url'] = Attr(name='url', value=self.url)
 
@@ -138,13 +146,13 @@ class Template(BaseModel):
         return {a.name: a.value for a in self.attrs}
 
     def to_store(self):
-        if getattr(self, 'store_worker', False):
+        if self.db_type:
             replica = self.__class__(db=self.db, table=self.table, func=self.func,
                                     db_type=self.db_type, kws=self.kws,
                                     name=self.name, url=self.url)
             if self.objects:
                 replica.objects = self.objects[:]
-            self.store_worker.store_q.put(replica)
+            self.db_type.store_q.put(replica)
 
     def attrs_from_dict(self, attrs):
         self.attrs = attr_dict((Attr(name=name, value=value) for
@@ -189,16 +197,6 @@ class Template(BaseModel):
         self.objects = parser.parse(source, template=self,
                                 selector=selector)
 
-    '''
-    def __repr__(self):
-        repr_string = self.name
-        if self.objects:
-            for objct in self.objects:
-                repr_string = "Template {}:\n".format(objct.name)
-                for attr in objct.attrs:
-                    repr_string += "\t{}: {}\n".format(attr.name, attr.value)
-        return repr_string
-    '''
 
 class ScrapeModel:
     def __init__(self, name='', domain='', phases: Phase=[], num_getters=1,
@@ -236,10 +234,10 @@ class ScrapeModel:
     def set_db_threads(self, db_threads):
         self.db_threads = set()
         for thread, templates in db_threads.items():
-            store_thread = getattr(databases, thread)()
+            store_thread = thread()
 
             for template in templates:
-                template.store_worker = store_thread
+                template.db_type = store_thread
             self.db_threads.add(store_thread)
 
     def prepare_phases(self):
@@ -273,7 +271,11 @@ class ScrapeModel:
             raise Exception(error_string.format(str(not_implemented),
                                                 phase.parser.__class__.__name__))
 
-    def get_template(self, key):
+    def get_template(self, template):
+        if type(template) is Template:
+            key = template.name
+        elif type(template) is str:
+            key = template
         for phase in self.phases:
             for template in phase.templates:
                 if template.name == key:
@@ -281,8 +283,7 @@ class ScrapeModel:
 
     def read_template(self, template_name='', as_object=False, *args):
         template = self.get_template(template_name)
-        database = getattr(databases, template.db_type)()
-        return database.read(*args, template=template)
+        return template.db_type.read(*args, template=template)
 
     def __repr__(self):
         repr_string = self.name + ':\n'
