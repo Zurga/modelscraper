@@ -1,33 +1,28 @@
-from modelscraper.dispatcher import Dispatcher
 from modelscraper.components import ScrapeModel, Phase, Template, Attr, Source
-from pymongo import MongoClient
 
 
-client = MongoClient()
-col = client.nu_nl
-db = col.headlines
-
-url = "http://www.nu.nl/block/html/articlelist?footer=ajax&section=buitenland&limit=20&offset={}&show_tabs=0"
-sources = (Source(url=url.format(i), copy_attrs=True,
-                  attrs=[Attr(name='category', value='buitenland')])
-           for i in range(0, 200000, 20))
+base_url = "http://www.nu.nl/block/html/articlelist?footer=ajax&section={section}&limit=20&offset={offset}&show_tabs=0"
+sections = ['buitenland', 'binnenland', 'economie', 'algemeen', 'tech', 'sport']
+sources = (
+    Source(url=base_url.format(section=section, offset=offset), copy_attrs=True,
+           attrs=[Attr(name='category', value=[section])])
+    for section in sections for offset in range(0, 200000, 20))
 
 headline= Template(
     name='headline',
     selector='li',
     db='nu_nl',
-    db_type='mongo_db',
+    db_type='MongoDB',
     table='article_urls',
     kws={'key': 'url'},
     required=True,
     attrs=[
-        Attr(name='url', selector='a', func='sel_attr',
-                    kws={'attr': 'href'}, source={'active': False,
-                                                  'copy_attrs': 'category'}),
+        Attr(name='url', selector='a', func='sel_url',
+             source={'active': False, 'copy_attrs': 'category'}),
         Attr(name='title', selector='.title', func='sel_text'),
-        Attr(name='excerpt', selector='.excerpt', func='sel_text'),
+        Attr(name='excerpt', selector='.excerpt', func='sel_text')
     ]
-    )
+)
 
 title_attr = Attr(name='title', selector='h1', func='sel_text')
 text_attr = Attr(name='text', selector='p', func='sel_text')
@@ -41,7 +36,7 @@ tags_attr = Attr(name='tags', selector='.article.tags a span',
 article = Template(
     name='article', selector='.column-content-background',
     db='nu_nl',
-    db_type='mongo_db',
+    db_type='MongoDB',
     table='articles',
     attrs=(
         title_attr,
@@ -51,15 +46,8 @@ article = Template(
         tags_attr
     )
 )
-'''
-parsed = [a['url'] for a in col.articles.find({'category': 'binnenland'})]
-print('parsed', len(parsed))
-sources = [Source(url=a['url'], attrs=[Attr(name='category',
-                                            value='binnenland')])
-           for a in db.find({'category': 'binnenland'})
-           if a['url'] not in parsed]
-'''
+
 nu = ScrapeModel(name='nu.nl', domain='http://nu.nl', phases=[
-    Phase(n_workers=5, sources=sources, templates=(headline,)),
-    Phase(n_workers=5, templates=(article,))
+    Phase(n_workers=2, sources=sources, templates=(headline,)),
+    Phase(n_workers=2, templates=(article,))
 ])
