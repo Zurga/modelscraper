@@ -4,8 +4,9 @@ from modelscraper.components import ScrapeModel, Phase, Template, Attr, Source
 base_url = "http://www.nu.nl/block/html/articlelist?footer=ajax&section={section}&limit=20&offset={offset}&show_tabs=0"
 sections = ['buitenland', 'binnenland', 'economie', 'algemeen', 'tech', 'sport']
 sources = (
-    Source(url=base_url.format(section=section, offset=offset), copy_attrs=True,
-           attrs=[Attr(name='category', value=[section])])
+    Source(url=base_url.format(section=section, offset=offset),
+           copy_attrs=['category'], attrs=[
+               Attr(name='category', value=[section])])
     for section in sections for offset in range(0, 200000, 20))
 
 headline= Template(
@@ -14,8 +15,6 @@ headline= Template(
     db='nu_nl',
     db_type='MongoDB',
     table='article_urls',
-    kws={'key': 'url'},
-    required=True,
     attrs=[
         Attr(name='url', selector='a', func='sel_url',
              source={'active': False, 'copy_attrs': 'category'}),
