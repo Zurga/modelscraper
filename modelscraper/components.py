@@ -26,7 +26,7 @@ class Phase(BaseModel):
     n_workers = attr.ib(default=1)
     repeat = attr.ib(default=False)
     sources = attr.ib(default=attr.Factory(list))
-    source_worker = attr.ib(default=WebSource)
+    source_worker = attr.ib(default=WebSource())
     synchronize = attr.ib(default=False)
     templates = attr.ib(default=attr.Factory(list))
     parser = attr.ib(default=HTMLParser)
@@ -60,6 +60,7 @@ class Source(BaseModel):
         # Apply the source template
         if self.src_template:
             self.url = self.src_template.format(self.url)
+
 
 def source_conv(source):
     if source:
@@ -105,6 +106,46 @@ class Attr(BaseModel):
                             zip_longest(new_kws, self.kws, fillvalue={})]
         return self.__class__(**{**self.__dict__, **kwargs})  # noqa
 
+    def gen_source(self, objects):
+        for objct in objects:
+            for value in objct.get(self.name, []):
+                if self._evaluate_condition(objct):
+                    attrs = self._copy_attrs(objct)
+                    if self.source.parent:
+                        _parent = self._replicate(name='_parent',
+                                        value=(objct['_url'],))
+                        attrs.append(_parent)
+                    yield self.source(url=value, attrs=attrs)
+
+    def _copy_attrs(self, objct):
+        attrs = []
+        if not self.source.copy_attrs:
+            return attrs
+        assert all(attr in objct for attr in self.source.copy_attrs)
+        if type(self.source.copy_attrs) == dict:
+            # We store the copied attributes under different names.
+            for key, value in self.source.copy_attrs.items():
+                attrs.append(self._replicate(name=value, value=objct[key]))
+        else:
+            for key in self.source.copy_attrs:
+                attrs.append(self._replicate(name=key, value=objct[key]))
+        return attrs
+
+    def _evaluate_condition(self, objct):
+        # TODO fix this ugly bit of code
+        if self.source_condition:
+            expression = ''
+
+            for operator, attrs in self.source_condition.items():
+                expression += (' '+operator+' ').join(
+                    [str(value) + c for name, c in attrs.items()
+                        for value in objct[name]])
+            if expression:
+                return eval(expression, {}, {})
+            else:
+                return False
+        return True
+
 
 @attr.s()
 class Template(BaseModel):
@@ -147,12 +188,20 @@ class Template(BaseModel):
 
     def to_store(self):
         if self.db_type:
-            replica = self.__class__(db=self.db, table=self.table, func=self.func,
-                                    db_type=self.db_type, kws=self.kws,
-                                    name=self.name, url=self.url)
+            replica = self.__class__(db=self.db, table=self.table,
+                                     func=self.func, db_type=self.db_type,
+                                     kws=self.kws, name=self.name, url=self.url)
             if self.objects:
                 replica.objects = self.objects[:]
-            self.db_type.store_q.put(replica)
+            self.db_type.in_q.put(replica)
+
+    def gen_sources(self):
+        for attr in self.attrs:
+            if attr.source:
+                yield from attr.gen_source(self.objects)
+        if self.source:
+            if getattr('source_from_object', self.parser[-1]):
+                yield self.parser[-1].source_from_object(self, objct)
 
     def attrs_from_dict(self, attrs):
         self.attrs = attr_dict((Attr(name=name, value=value) for
@@ -194,8 +243,7 @@ class Template(BaseModel):
         else:
             selector = None
         # Create the actual objects
-        self.objects = parser.parse(source, template=self,
-                                selector=selector)
+        self.objects = parser.parse(source, template=self, selector=selector)
 
 
 class ScrapeModel:
