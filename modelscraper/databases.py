@@ -14,12 +14,12 @@ unsupported = 'The "{}" function is not supported by the {} adapter'
 class BaseDatabase(Process):
     def __init__(self, cache=10):
         super().__init__()
-        self.store_q = JoinableQueue()
+        self.in_q = JoinableQueue()
         self.cache = cache
 
     def run(self):
         while True:
-            template = self.store_q.get()
+            template = self.in_q.get()
 
             if template is None:
                 break
