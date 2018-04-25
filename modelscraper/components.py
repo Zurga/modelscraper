@@ -6,9 +6,8 @@ import attr
 
 from .sources import WebSource
 from .parsers import HTMLParser
-from .helpers import selector_converter, attr_dict, str_as_tuple, wrap_list, depth
+from .helpers import selector_converter, attr_dict, str_as_tuple, wrap_list
 from . import databases
-
 
 @attr.s
 class BaseModel(object):
@@ -18,7 +17,6 @@ class BaseModel(object):
     def __call__(self, **kwargs):
         return self.__class__(**{**self.__dict__, **kwargs})  # noqa
 
-
 @attr.s
 class Phase(BaseModel):
     active = attr.ib(default=True)
@@ -26,10 +24,13 @@ class Phase(BaseModel):
     n_workers = attr.ib(default=1)
     repeat = attr.ib(default=False)
     sources = attr.ib(default=attr.Factory(list))
-    source_worker = attr.ib(default=WebSource())
+    source_worker = attr.ib(default=WebSource)
     synchronize = attr.ib(default=False)
     templates = attr.ib(default=attr.Factory(list))
     parser = attr.ib(default=HTMLParser)
+    save_raw = attr.ib(default=False)
+    db_type = attr.ib(default=None)
+
 
     def __attrs_post_init__(self):
         for template in self.templates:
@@ -44,7 +45,7 @@ class Source(BaseModel):
     method = attr.ib('get')
     parse = attr.ib(True)
     headers = attr.ib(attr.Factory(dict))
-    data = attr.ib(attr.Factory(dict))
+    data = attr.ib(default='')
     params = attr.ib(attr.Factory(dict))
     src_template = attr.ib('{}')
     retries = attr.ib(10)
@@ -61,12 +62,23 @@ class Source(BaseModel):
         if self.src_template:
             self.url = self.src_template.format(self.url)
 
+    @classmethod
+    def from_db(cls, template, url='url', query=''):
+        db_type = template.db_type
+        for t in db_type().read(template=template, query=query):
+            value = t.attrs.get(url, [])
+            if type(value) is list:
+                for v in value:
+                    yield cls(url=v)
+            else:
+                yield cls(url=value)
 
 def source_conv(source):
-    if source:
-        if type(source) == Source:
-            return source
-        return Source(**source) if type(source) == dict else Source()
+    if type(source) in [list, Source]:
+        return source
+    elif source or type(source) is dict:
+        print(source)
+        return Source(**source) if type(source) is dict else Source()
 
 
 @attr.s
@@ -111,15 +123,12 @@ class Attr(BaseModel):
             for value in objct.get(self.name, []):
                 if self._evaluate_condition(objct):
                     attrs = self._copy_attrs(objct)
-                    if self.source.parent:
-                        _parent = self._replicate(name='_parent',
-                                        value=(objct['_url'],))
-                        attrs.append(_parent)
-                    yield self.source(url=value, attrs=attrs)
+                    dup = self.source(url=value, attrs=attrs)
+                    yield dup
 
     def _copy_attrs(self, objct):
         attrs = []
-        if not self.source.copy_attrs:
+        if not self.source or not self.source.copy_attrs:
             return attrs
         assert all(attr in objct for attr in self.source.copy_attrs)
         if type(self.source.copy_attrs) == dict:
@@ -129,6 +138,10 @@ class Attr(BaseModel):
         else:
             for key in self.source.copy_attrs:
                 attrs.append(self._replicate(name=key, value=objct[key]))
+        if self.source.parent:
+            _parent = self._replicate(name='_parent',
+                            value=(objct['_url'],))
+            attrs.append(_parent)
         return attrs
 
     def _evaluate_condition(self, objct):
@@ -147,7 +160,7 @@ class Attr(BaseModel):
         return True
 
 
-@attr.s()
+@attr.s
 class Template(BaseModel):
     db = attr.ib(default=None)
     table = attr.ib(default=None)
@@ -164,33 +177,32 @@ class Template(BaseModel):
     attrs = attr.ib(default=attr.Factory(dict), convert=attr_dict)
     url = attr.ib(default='')
     parser = attr.ib(default=False, convert=wrap_list)
+    preparser = attr.ib(default=None)
 
     def __attrs_post_init__(self):
-        if type(self.db_type) is str and self.db_type and self.db and self.table:
+        if type(self.db_type) is str and self.db_type and self.db:
             database_class = getattr(databases, self.db_type)
             if database_class:
                 self.db_type = database_class
             else:
                 raise Exception(self.db + 'This database is not supported')
 
-        elif self.db and not self.db_type:
-            raise Exception(self.name +
-                'Database name is set, but not the database type')
-
-        elif self.db and not self.table and self.db_type:
-            raise Exception(self.name +
-                'Database name is set, but not the table')
         if self.url:
             self.attrs['url'] = Attr(name='url', value=self.url)
+
+        if type(self.source) is list:
+            for attr in self.source:
+                self.attrs[attr].source = Source(active=False)
 
     def attrs_to_dict(self):
         return {a.name: a.value for a in self.attrs}
 
     def to_store(self):
         if self.db_type:
-            replica = self.__class__(db=self.db, table=self.table,
-                                     func=self.func, db_type=self.db_type,
-                                     kws=self.kws, name=self.name, url=self.url)
+            replica = self.__class__(
+                db=self.db, table=self.table, func=self.func, kws=self.kws,
+                name=self.name, url=self.url)
+
             if self.objects:
                 replica.objects = self.objects[:]
             self.db_type.in_q.put(replica)
@@ -200,7 +212,7 @@ class Template(BaseModel):
             if attr.source:
                 yield from attr.gen_source(self.objects)
         if self.source:
-            if getattr('source_from_object', self.parser[-1]):
+            if getattr(self.parser[-1], 'source_from_object', False):
                 yield self.parser[-1].source_from_object(self, objct)
 
     def attrs_from_dict(self, attrs):
@@ -228,9 +240,10 @@ class Template(BaseModel):
                 attr.selector = parser.get_selector(attr.selector)
 
     def parse(self, source):
+        if self.preparser:
+            source.data = self.preparser(source.data)
         if len(self.parser) > 1:
             for parser, selector in zip(self.parser[:-1], self.selector[:-1]):
-                print(parser, selector)
                 source.data = parser.parse(source, self,
                                         selector=selector,
                                         gen_objects=False)
@@ -244,6 +257,14 @@ class Template(BaseModel):
             selector = None
         # Create the actual objects
         self.objects = parser.parse(source, template=self, selector=selector)
+
+    @staticmethod
+    def from_table(self, db_type, db, table, query=''):
+        db_type = getattr(databases, db_type)
+        yield from db_type().read(
+            self.__class__(db_type=db_type, table=table, db=db),
+            query=query
+        )
 
 
 class ScrapeModel:
