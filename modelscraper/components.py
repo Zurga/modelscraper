@@ -8,6 +8,8 @@ from .sources import WebSource
 from .parsers import HTMLParser
 from .helpers import selector_converter, attr_dict, str_as_tuple, wrap_list
 from . import databases
+from .scrape_worker import ScrapeWorker, DummyScrapeWorker
+
 
 @attr.s
 class BaseModel(object):
@@ -298,7 +300,14 @@ class ScrapeModel:
         for phase in self.phases:
             for template in phase.templates:
                 template.prepare(self.parsers)
-                # TODO Fix the right selector with the right parser.
+
+        if dummy:
+            self.worker = ScrapeWorker(self)
+        else:
+            self.worker = DummyScrapeWorker(self)
+
+    def run(self):
+        self.worker.run()
 
     def set_db_threads(self, db_threads):
         self.db_threads = set()
