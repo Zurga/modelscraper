@@ -3,6 +3,8 @@ import csv
 import json
 import re
 import logging
+from logging.handlers import QueueHandler
+from queue import Queue
 
 import lxml.html as lxhtml
 import lxml.etree as etree
@@ -14,6 +16,8 @@ import xmljson
 
 from .helpers import str_as_tuple, add_other_doc, wrap_list
 
+
+logger = logging.getLogger(__name__)
 
 class BaseParser:
     '''
@@ -54,14 +58,12 @@ class BaseParser:
         If the source has a template, the data in the source is parsed
         according to that template.
         '''
-
         data = self._convert_data(source.data)
         extracted = self._extract(data, selector)
         if not extracted:
-            logging.log(logging.WARNING, "{selector} selector of template: " +
-                        "{name} returned no data".format(selector=selector,
-                                                         name=template.name))
-
+            logging.log(logging.WARNING,
+                        "{selector} selector of template: ".format(selector) +
+                        "{name} returned no data".format(name=template.name))
         if not gen_objects:
             return self.to_string(extracted)
         objects = list(self._gen_objects(template, extracted, source))
@@ -213,6 +215,8 @@ class BaseParser:
         return self._value(text, index)
 
     def _value(self, parsed, index=None):
+        if not parsed:
+            return None
         if type(parsed) != list:
             parsed = list(parsed)
         return parsed[index] if index is not None else parsed
@@ -236,10 +240,9 @@ class HTMLParser(BaseParser):
                         'Something weird has been returned by the server.')
             logging.log(logging.WARNING, data)
             return False
-        except XMLSyntaxError:
+        except etree.XMLSyntaxError:
             logging.log(logging.WARNING,
-                        'XML syntax parsing error:')
-            logging.log(logging.WARNING, data)
+                        'XML syntax parsing error:',)
             return False
         else:
             data.make_links_absolute(self.domain)
@@ -277,12 +280,10 @@ class HTMLParser(BaseParser):
         return (data,)
 
     def _extract(self, html, selector):
-        if html is not None:
-            return self._apply_selector(selector, html)
-        return []
+        return self._apply_selector(selector, html)
 
     def to_string(self, data):
-        return ''.join(data.to_string())
+        return ''.join([lxhtml.tostring(d) for d in data])
 
     def _source_from_object(self, template, objct, source):
         # TODO fix that the source object can determine for itself where data
@@ -444,6 +445,11 @@ class JSONParser(HTMLParser):
 
     def sel_text(self, elements, **kwargs):
         return self._sel_text((el.text for el in elements), **kwargs)
+
+    def to_string(self, data):
+        data = (etree.tostring(d).decode() for d in data)
+        data = (d.replace('&gt;', '>').replace('&lt;', '<') for d in data)
+        return ''.join(data)
 
 class TextParser(BaseParser):
     def __init__(self, **kwargs):
