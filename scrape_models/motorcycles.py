@@ -1,101 +1,131 @@
-from dispatcher import Dispatcher
 import re
-import models
-from functions.store_functions import *
-from functions.parse_functions import *
-from pymongo import MongoClient
+from modelscraper.components import ScrapeModel, Phase, Template, Attr, Source
+from modelscraper.parsers import JSONParser
 
-client = MongoClient()
 
-autoscout = ScrapeModel(name='autoscout24', domain='autoscout24.nl', phases=[
-    Phase(getters=[models.Getter(url='http://ww4.autoscout24.nl/?atype=B&mmvco=0&cy=NL&ustate=N%2CU&fromhome=1&intcidm=HP-Searchmask-Button&dtr=s&results=20')],
-        templates=[
-            Template(name='motorcycle', js_regex='var articlesFromServer = (.+)\|\|', attrs=[
-                Attr(name='price', func=sel_json, kws={'key': 'price_raw'}),
-                Attr(name='brand', func=sel_json, kws={'key': 'mk'}),
-                Attr(name='make', func=sel_json, kws={'key': 'md'}),
-                Attr(name='year', func=sel_json, kws={'key': 'fr'}),
-                Attr(name='mileage', func=sel_json, kws={'key': 'ma'}),
-                Attr(name='city', func=sel_json, kws={'key': 'ct'}),
-                Attr(name='url', func=sel_json, kws={'key': 'ei'}),
-                Attr(name='zip', func=sel_json, kws={'key': 'zp'}),
-                Attr(name='power', func=sel_json, kws={'key': 'pk'}),
-            ], store=StoreObject(func=store_mongo,
-                                        kws={'db': 'moto_final', 'collection': 'auto24'})
-            )
-        ]
-        )
+vehicle_type = Attr(name='vehicle_type')
+price = Attr(name='price', func='sel_text', kws={'numbers': True}, type=int)
+brand = Attr(name='brand', func='sel_text')
+make = Attr(name='make', func='sel_text')
+year = Attr(name='year', func='sel_text', kws={'numbers': True}, type=int)
+mileage = Attr(name='mileage', func='sel_text', kw={'numbers': True}, type=int)
+city = Attr(name='city', func='sel_text')
+url = Attr(name='url', func='sel_url')
+zipcode = Attr(name='zip', func='sel_text')
+power = Attr(name='power', func='sel_text')
+
+vehicle = Template(
+    name='vehicle', db_type='MongoDB', db='vehicles',
+    attrs=[
+        vehicle_type,
+        price,
+        brand,
+        make,
+        year,
+        mileage,
+        city,
+        url,
+        zipcode,
+        power
+    ]
+)
+
+autoscout_template = vehicle(
+    table='autoscout', regex='var articlesFromServer = (.+)\|\|',
+    attrs=[
+        vehicle_type,
+        price(selector='price_raw'),
+        brand(selector='mk'),
+        make(selector='md'),
+        year(selector='fr'),
+        mileage(selector='ma'),
+        city(selector='ct'),
+        url(selector='ei', func='sel_text'),
+        zipcode(selector='zp'),
+        power(selector='pk')
+    ]
+)
+
+autotrader_template = vehicle(
+    table='autotrader', selector='.result',
+    attrs=[
+        brand(selector='h2', kws={'regex': '(^\w+)'}),
+        make(selector='h2', kws={'regex': '^\w+ (.*)'}),
+        price(selector='.result-price-label'),
+        year(selector='.col-left',kws={'regex': '\w{3} (\d{4})'}),
+        mileage(selector='.col-left', kws={'regex': '(.*) km'}),
+        url(selector='a.tracker'),
+        #Attr(name='dealer_name', selector='.dealer-info div', func=sel_text),
+        city,
+        zipcode,
+        power,
+    ])
+sources = models.Source(url='http://ww4.autoscout24.nl/?atype=B&mmvco=0&cy=NL&ustate=N%2CU&fromhome=1&intcidm=HP-Searchmask-Button&dtr=s&results=20')
+
+marktplaats_template = Template(
+    name='motorcycle', selector='section.search-results-table article',
+    table='marktplaats',
+    attrs=[
+        make(selector='h2 a', kws={'regex': '(\w+) -,'}),
+        price(selector='.price', kws={'regex': '(\d+),'}),
+        year(selector='.listing-priority-product-container',
+             kws={'regex': '(\d{4})'}),
+        mileage(selector='.listing-priority-product-container',
+                    kws={'regex': '(.*) km'}),
+        city(selector='.location-name'),
+        url(selector='h2 > a'),
+    ]
+)
+autoscout = ScrapeModel(
+    name='autoscout24',
+    domain='autoscout24.nl',
+    phases=[
+        Phase(sources=[], templates=[autoscout_template]),
 ])
 
-autotrader = ScrapeModel(name='autotrader', domain='http://autotrader.nl', num_getters=1, cookies={'CookieOptIn': 'true'},
+autotrader = ScrapeModel(name='autotrader', domain='http://autotrader.nl', num_sources=1, cookies={'CookieOptIn': 'true'},
                           phases=[
     Phase(
-        getters=[
-            Getter(url='http://www.autotrader.nl/motor/zoeken/'),
+        sources=[
+            Source(url='http://www.autotrader.nl/motor/zoeken/'),
         ],
         templates=[
             Template(name='motorcycle', selector='.result',
                             store=StoreObject(func=store_mongo,
                                                      kws={'db': 'moto', 'collection': 'autotrader'}),
                        attrs=[
-                           Attr(name='brand', selector='h2', func=sel_text,
-                                       kws={'regex': '(^\w+)'}),
-                           Attr(name='name', selector='h2', func=sel_text,
-                                       kws={'regex': '^\w+ (.*)'}),
-                           Attr(name='price', selector='.result-price-label', func=sel_text,
-                                       kws={'numbers': 1}),
-                           Attr(name='year', selector='.col-left',
-                                       func=sel_text, kws={'regex': '\w{3} (\d{4})', 'numbers': 1}),
-                           Attr(name='mileage', selector='.col-left',
-                                       func=sel_text, kws={'regex': '(.*) km', 'numbers': 1}),
-                           Attr(name='url', selector='a.tracker', func=sel_attr,
-                                       kws={'attr': 'href'}),
-                           Attr(name='dealer_name', selector='.dealer-info div', func=sel_text),
                        ]),
             Template(name='next_page', selector='#pager', attrs=[
                 Attr(name='url', func=sel_attr, selector='a.tracker',
-                            kws={'attr': 'href'}, getter=Getter()),
+                            kws={'attr': 'href'}, getter=Source()),
             ]),
         ]
         )
 ])
 
-marktplaats = ScrapeModel(name='marktplaats', domain='marktplaats.nl', num_getters=2, cookies={'CookieOptIn': 'true'},
-                          phases=[
-    Phase(
-        getters=[
-        Getter(url='http://www.marktplaats.nl/z/motoren/motoren-bmw.html?categoryId=692',
-               attrs=[Attr(name='brand', value='BMW')]),
-        Getter(url='http://www.marktplaats.nl/z/motoren/motoren-kawasaki.html?categoryId=697',
-               attrs=[Attr(name='brand', value='Kawasaki')]),
-        Getter(url='http://www.marktplaats.nl/z/motoren/motoren-honda.html?categoryId=696',
-               attrs=[Attr(name='brand', value='Honda')]),
-        Getter(url='http://www.marktplaats.nl/z/motoren/motoren-suzuki.html?categoryId=707',
-               attrs=[Attr(name='brand', value='Suzuki')]),
-        Getter(url='http://www.marktplaats.nl/z/motoren/motoren-yamaha.html?categoryId=710',
-               attrs=[Attr(name='brand', value='Yamaha')]),
-        Getter(url='http://www.marktplaats.nl/z/motoren/motoren-triumph.html?categoryId=709',
-               attrs=[Attr(name='brand', value='Triumph')]),
+marktplaats = ScrapeModel(
+    name='marktplaats', domain='marktplaats.nl', num_sources=2, cookies={'CookieOptIn': 'true'},
+    phases=[
+        Phase(
+            sources=[
+        Source(url='http://www.marktplaats.nl/z/motoren/motoren-bmw.html?categoryId=692',
+               attrs=[brand(value='BMW')]),
+        Source(url='http://www.marktplaats.nl/z/motoren/motoren-kawasaki.html?categoryId=697',
+               attrs=[brand(value='Kawasaki')]),
+        Source(url='http://www.marktplaats.nl/z/motoren/motoren-honda.html?categoryId=696',
+               attrs=[brand(value='Honda')]),
+        Source(url='http://www.marktplaats.nl/z/motoren/motoren-suzuki.html?categoryId=707',
+               attrs=[brand(value='SUZUKI')]),
+        Source(url='http://www.marktplaats.nl/z/motoren/motoren-yamaha.html?categoryId=710',
+               attrs=[brand(value='Yamaha')]),
+        Source(url='http://www.marktplaats.nl/z/motoren/motoren-triumph.html?categoryId=709',
+               attrs=[brand(value='Triumph')]),
     ],
         templates=[
-            Template(name='motorcycle', selector='section.search-results-table article',
-                            store=StoreObject(func=store_mongo,
-                                                     kws={'db': 'moto', 'collection': 'marktplaats'}),
-                       attrs=[
-                           Attr(name='name', selector='h2 a', func=sel_text,
-                                       kws={'regex': '(\w+) -,'}),
-                           Attr(name='price', selector='.price', func=sel_text,
-                                       kws={'regex': '(\d+),', 'numbers': 1}),
-                           Attr(name='year', selector='.listing-priority-product-container',
-                                       func=sel_text, kws={'regex': '(\d{4})', 'numbers': 1}),
-                           Attr(name='mileage', selector='.listing-priority-product-container',
-                                       func=sel_text, kws={'regex': '(.*) km', 'numbers': 1}),
-                           Attr(name='city', func=sel_text, selector='.location-name'),
-                           Attr(name='url', selector='h2 > a', func=sel_attr, kws={'attr': 'href'}),
-                       ]),
+            marktplaats_template,
             Template(name='pages', selector='#pagination-pages', attrs=[
                 Attr(name='url', func=sel_attr, selector='a',
-                            kws={'attr': 'href'}, getter=Getter()),
+                            kws={'attr': 'href'}, getter=Source()),
             ]),
         ]
         )
@@ -103,7 +133,7 @@ marktplaats = ScrapeModel(name='marktplaats', domain='marktplaats.nl', num_gette
 
 bikenet = ScrapeModel(name='bikenet', domain='bikenet.nl', num_get=1, phases=[
     Phase(
-        getters=[Getter(url='https://bikenet.nl/occasions/?occasionsPerPage=90&pagina=1')],
+        sources=[Source(url='https://bikenet.nl/occasions/?occasionsPerPage=90&pagina=1')],
         templates=[
         Template(name='motorcycle', selector='li.span3',
                         store=StoreObject(func=store_mongo, kws={'db': 'moto', 'collection': 'bikenet'}),
@@ -119,15 +149,7 @@ bikenet = ScrapeModel(name='bikenet', domain='bikenet.nl', num_get=1, phases=[
                 ]),
             Template(name='next_page', attrs=[
                 Attr(name='url', selector='.pagination.bottom a[href*="pagina"]',
-                            func=sel_attr, kws={'attr': 'href'}, getter=Getter())
+                            func=sel_attr, kws={'attr': 'href'}, getter=Source())
             ])
         ])
     ])
-
-
-disp = Dispatcher()
-# disp.add_scraper(marktplaats)
-disp.add_scraper(bikenet)
-# disp.add_scraper(autotrader)
-# disp.add_scraper(autoscout)
-disp.run()

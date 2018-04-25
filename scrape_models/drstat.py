@@ -50,7 +50,7 @@ drstat = ScrapeModel(
             Template(
                 name='course', selector='', func='update',
                 kws={'key': 'name', 'method': '$addToSet'},
-                db_type='mongo_db', db='drstat', table='courses',
+                db_type='MongoDB', db='drstat', table='courses',
                 attrs=[
                     Attr(name='name', selector='li.title',
                                 func='sel_text'),

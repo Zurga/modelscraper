@@ -13,7 +13,7 @@ category_temp = Template(name='sub_page',
                          selector='.sections a',
                          db='startpagina',
                          table='subpages',
-                         db_type='mongo_db',
+                         db_type='MongoDB',
                          attrs=(sub_page_url,
                                 sub_page_name))
 
@@ -24,7 +24,7 @@ website_temp = Template(name='website',
                         selector='#columns a',
                         db='startpagina',
                         table='websites',
-                        db_type='mongo_db',
+                        db_type='MongoDB',
                         attrs=(website_url, website_name))
 
 model = ScrapeModel(name='startpagina', domain='http://www.startpagina.nl',

@@ -14,7 +14,7 @@ programs_az = Phase(
         templates=(
             Template(
                 name='program', selector='.content-column.quarter',
-                db_type='mongo_db', db='npo_tv_programs', table='programs',
+                db_type='MongoDB', db='npo_tv_programs', table='programs',
                 attrs=(
                     Attr(name='title', selector='h3', func='sel_text'),
                     Attr(name='url', selector='a.full-link', func='sel_url',
@@ -30,7 +30,7 @@ episodes_phase = Phase(n_workers=5, sources=(Source(url=nos_search.format(start)
             templates=(
             Template(
                 name='episodes', selector='.list-item',
-                db_type='mongo_db', db='dwdd', table='episode_urls',
+                db_type='MongoDB', db='dwdd', table='episode_urls',
                 attrs=(
                     Attr(name='url', selector='.span4 a', func='sel_url',
                         source=Source(active=False)),
@@ -42,7 +42,7 @@ npo_tv_programs = ScrapeModel(name='npo_tv_programs', domain='http://npo.nl',
     num_getters=2, phases=[
     Phase(n_workers=10, sources=sources, templates=(
         Template(name='episode', selector='.column-player-info', db='dwdd', func='update',
-                 table='episodes', db_type='mongo_db', attrs=(
+                 table='episodes', db_type='MongoDB', attrs=(
                     Attr(name='date', selector='ul.the-player-meta-block__date-tags',
                          func='sel_text'),
                     Attr(name='description', selector='.overflow-description',

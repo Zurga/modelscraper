@@ -31,7 +31,7 @@ mensen = ScrapeModel(name='mensenrechten.nl', domain='http://mensenrechten.nl', 
                             ]),
         ]),
     Phase(source_worker=WebSource, parser=HTMLParser, templates=[
-            Template(name='verdict', selector='.section', db_type='mongo_db', db='human_rights',
+            Template(name='verdict', selector='.section', db_type='MongoDB', db='human_rights',
                table='verdicts', attrs=[
                 Attr(name='title', selector='.header-medium', func='sel_url'),
                 Attr(name='verdict', selector='.oordelen-page .content p', func='sel_url'),

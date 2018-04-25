@@ -18,7 +18,7 @@ LuckyTV = ScrapeModel(name='Lucky TV', domain='http://www.luckytv.nl/',
         templates=(
             Template(
                 name='episode', selector='article.video',
-                db_type='mongo_db', db='lucky_tv', table='episodes',
+                db_type='MongoDB', db='lucky_tv', table='episodes',
                 attrs=(
                     Attr(name='url', selector='a:nth-of-type(1)',
                          func='sel_url'),

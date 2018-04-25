@@ -18,7 +18,7 @@ gsmhelpdesk_nummerreeksen = ScrapeModel(name='gsmhelpdesk_nummerreeksen', domain
     templates=(
         Template(
             name='number_range', selector='tr',
-            db_type='mongo_db', db='gsmhelpdesk_nummerreeksen', table='number_range',
+            db_type='MongoDB', db='gsmhelpdesk_nummerreeksen', table='number_range',
             attrs=(
                 Attr(name='start', selector='td:nth-of-type(1)',
                             func='sel_text', kws={'numbers': True}),

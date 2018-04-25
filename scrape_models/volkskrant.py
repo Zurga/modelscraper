@@ -50,7 +50,7 @@ volkskrant = ScrapeModel(
             templates=(
                 Template(
                     name='article', selector='',
-                    db_type='mongo_db', db='volkskrant', table='articles',
+                    db_type='MongoDB', db='volkskrant', table='articles',
                     attrs=(
                         Attr(name='url', selector='a', func='sel_url',
                              source=Source(active=False)),

@@ -15,7 +15,7 @@ templates = Template(
     name='headline',
     selector='li',
     db='nu_nl',
-    db_type='mongo_db',
+    db_type='MongoDB',
     table='headlines',
     attrs=[
         Attr(name='url', selector='a', func='sel_attr',

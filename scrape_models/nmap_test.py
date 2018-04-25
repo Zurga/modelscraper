@@ -4,7 +4,7 @@ from modelscraper.sources import ProgramSource
 
 
 port_template = Template(
-    name='ports', selector='port', db_type='mongo_db', db='ports',
+    name='ports', selector='port', db_type='MongoDB', db='ports',
     table='ports', attrs=(
     Attr(name='portnumber', func='sel_attr',
          kws={'attr': 'portid'}),

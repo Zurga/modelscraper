@@ -29,7 +29,7 @@ belgian_parlement_roles = ScrapeModel(name='belgian_parlement_roles', domain='ht
         templates=(
             Template(
                 name='government', selector='table:nth-of-type(1) tr',
-                db_type='mongo_db', db='belgian_politics', table='politicians',
+                db_type='MongoDB', db='belgian_politics', table='politicians',
                 attrs=(
                     Attr(name='url', selector='td:nth-of-type(2) a', func='sel_url'),
                     Attr(name='title', selector='td:nth-of-type(1)', func='sel_text'),

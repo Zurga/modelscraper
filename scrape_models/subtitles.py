@@ -15,7 +15,7 @@ subtitles = ScrapeModel(
         Phase(n_workers=5, sources=urls, parser=TextParser,
             templates=(
                 Template(
-                    name='subtitle', db_type='mongo_db', db='nos_journaal',
+                    name='subtitle', db_type='MongoDB', db='nos_journaal',
                     table='episodes', func='update', kws={'key': 'url'},
                     attrs=(
                         Attr(name='subtitles', func='sel_text'),

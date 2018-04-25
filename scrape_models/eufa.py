@@ -1,4 +1,3 @@
-from modelscraper.dispatcher import Dispatcher
 from modelscraper.components import ScrapeModel, Phase, Template, Attr, Source
 from modelscraper.workers import WebSource
 from modelscraper.parsers import HTMLParser
@@ -20,7 +19,7 @@ uefa = ScrapeModel(
     Phase(templates=[
             Template(
                 name='player', selector='.squad--team-player',
-                db_type='mongo_db', db='uefa', table='players',
+                db_type='MongoDB', db='uefa', table='players',
                 attrs=[
                     Attr(name='name', selector='.squad--player-name',
                                 func='sel_text'),
@@ -32,7 +31,7 @@ uefa = ScrapeModel(
             ),
             # Template(
             #     name='team', selector='',
-            #     db_type='mongo_db', func='update', db='uefa', table='players',
+            #     db_type='MongoDB', func='update', db='uefa', table='players',
             #     attrs=[
             #         Attr(name='team', selector='h1.team-name', func='sel_text'),
             #     ]

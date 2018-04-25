@@ -55,11 +55,11 @@ test = [Source(url='http://www.meertens.knaw.nl/nvb/naam/is/Jim')]
 sources = (Source(url="http://www.meertens.knaw.nl/nvb/naam/begintmet/" + l)
                         for l in string.ascii_lowercase)
 meertens = ScrapeModel(
-    name='namen', domain='http://www.meertens.knaw.nl/', num_getters=5,
+    name='namen', domain='http://www.meertens.knaw.nl/', num_getters=2,
     phases=[
         Phase(sources=sources, templates=[name_list, next_page]
         ),
-        Phase(sources=test, templates=[
+        Phase(templates=[
             name_template,
             data_template(selector='a[href*="absoluut/man/eerstenaam"]',
                           attrs=[data_attr, sex_attr(value='men')]),

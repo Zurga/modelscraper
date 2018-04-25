@@ -1,5 +1,5 @@
 from modelscraper.dispatcher import Dispatcher
-from modelscraper.workers import WebSource
+from modelscraper.sources import WebSource
 from modelscraper.parsers import HTMLParser
 from modelscraper.components import ScrapeModel, Phase, Template, Attr, Source
 
@@ -27,7 +27,7 @@ motorparts = ScrapeModel(
         ),
         ),
         Phase(source_worker=WebSource, parser=HTMLParser, templates=(
-            Template(name='partCategory', db='motorparts', db_type='mongo_db',
+            Template(name='partCategory', db='motorparts', db_type='MongoDB',
                      table='part_categories', source={'active':False,
                                                       'parent':True},
                      selector='.category',
@@ -38,7 +38,7 @@ motorparts = ScrapeModel(
                               selector='.description'),
                             )
             ),
-            Template(name='motorcycle', db='motorparts', db_type='mongo_db',
+            Template(name='motorcycle', db='motorparts', db_type='MongoDB',
                             table='motorcycles', attrs=(
                 Attr(name='make', func='sel_text',
                             selector='#ctl00_cphMain_hHeadMake'),
@@ -55,7 +55,7 @@ motorparts = ScrapeModel(
         Phase(source_worker=WebSource, parser=HTMLParser, templates=(
             Template(name='part', selector='.scrollable-area-2 .cart-table tr',
                      db='motorparts', table='parts', func='update',
-                     db_type='mongo_db',
+                     db_type='MongoDB',
                      attrs=(
                          Attr(name='part_number', func='sel_text',
                               selector='h4 + span'),

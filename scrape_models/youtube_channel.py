@@ -28,7 +28,7 @@ youtube_channel = ScrapeModel(
         templates=(
             Template(
                 name='channel_videos', selector='li.channels-content-item',
-                db_type='mongo_db', db='youtube_channel', table='channel_videos',
+                db_type='MongoDB', db='youtube_channel', table='channel_videos',
                 attrs=[
                     Attr(name='url', selector='h3.yt-lockup-title a', func='sel_url'),
 

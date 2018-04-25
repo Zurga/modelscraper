@@ -42,7 +42,7 @@ nos = ScrapeModel(name='nos.nl', domain='http://nos.nl', num_getters=2, phases=[
         templates=[
             Template(
                 name='headline', selector='#archief li',
-                db_type='mongo_db', db='nos_nl', table='headlines',
+                db_type='MongoDB', db='nos_nl', table='headlines',
                 attrs=[
                     Attr(name='url', selector='a', func='sel_attr',
                                 kws={'attr': 'href'}, source={'active': False}),
@@ -55,7 +55,7 @@ nos = ScrapeModel(name='nos.nl', domain='http://nos.nl', num_getters=2, phases=[
     ),
     Phase(source_worker=WebSource, parser=HTMLParser,
         templates=[
-            Template(name='headline', db_type='mongo_db', db='nos_nl',
+            Template(name='headline', db_type='MongoDB', db='nos_nl',
                             table='articles',
                 attrs=[
                     Attr(name='title', selector='h1', func='sel_text'),

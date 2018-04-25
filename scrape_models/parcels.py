@@ -13,7 +13,7 @@ metro = ScrapeModel(name='landmark', domain='https://mercury.landmarkglobal.com/
                 for i in range(5000, 50000000)),
         templates=[
             Template(
-                name='shipment', selector=None, db='shipments', db_type='mongo_db',
+                name='shipment', selector=None, db='shipments', db_type='MongoDB',
                 table='shipment', attrs=[
                     Attr(name='carrier', selector='#large_shipment_info_box > div:nth-child(2) > div:nth-child(1)',
                                 func='sel_text', kws={'regex': 'Carrier:\s(\w+)'}),
@@ -23,7 +23,7 @@ metro = ScrapeModel(name='landmark', domain='https://mercury.landmarkglobal.com/
                                 func='sel_text'),
                 ]),
             Template(
-                name='event', selector='table tr:not(:nth-child(1))', db_type='mongo_db', db='shipments', table='events', attrs=[
+                name='event', selector='table tr:not(:nth-child(1))', db_type='MongoDB', db='shipments', table='events', attrs=[
                     Attr(name='description', selector='td:nth-of-type(1)', func='sel_text'),
                     Attr(name='date', selector='td:nth-of-type(2)', func='sel_text'),
                     Attr(name='location', selector='td:nth-of-type(3)', func='sel_text'),

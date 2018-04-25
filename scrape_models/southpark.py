@@ -17,7 +17,7 @@ southpark = ScrapeModel(name='southpark', domain='http://southpark.cc.com/',
         templates=(
             Template(
                 name='video', selector='',
-                db_type='mongo_db', db='southpark', table='video',
+                db_type='MongoDB', db='southpark', table='video',
                 attrs=(
                     Attr(name='url', selector='a', func='sel_url',
                         source=Source(active=False)), # source is for next run
@@ -35,7 +35,7 @@ southpark = ScrapeModel(name='southpark', domain='http://southpark.cc.com/',
         templates=(
             Template(
                 name='video', selector='',
-                db_type='mongo_db', db='southpark', table='video',
+                db_type='MongoDB', db='southpark', table='video',
                 attrs=(
                     Attr(name='url', selector='a', func='sel_url',
                         source=Source(active=False)), # source is for next run

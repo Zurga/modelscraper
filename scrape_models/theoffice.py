@@ -1,28 +1,21 @@
-from dispatcher import Dispatcher
-from components import ScrapeModel, Phase, Template, Attr, Source
-from pymongo import MongoClient
-from workers import WebSource
-from parsers import HTMLParser
+from modelscraper.components import ScrapeModel, Phase, Template, Attr, Source
 
-
-cl = MongoClient()
-db = cl.theoffice
-col = db.season
 
 filepath = '/mnt/Movies/theoffice/'
+create_dir = 'sudo mkdir -p '+ filepath +'/{season}/'
+youtube_dl = 'sudo youtube-dl -o ' + filepath + '{season}/{episode} {url}'
+extended_url = 'http://watchtheoffice.online/the-office-s{02d}e{02d}-extended/'
 
 theoffice = ScrapeModel(name='theoffice', domain='http://watchtheofficeonline.com',
     num_getters=2, phases=[
-    Phase(source_worker=WebSource, parser=HTMLParser, sources=[
-        Source(url="http://watchtheofficeonline.com/s{}e{}".format(season,
-                                                                   episode))
-        for season in range(1, 10) for episode in range(1, 30)],
+    Phase(
+        sources=[Source(url=extended_url.format(season, episode))
+                 for season in range(1, 10) for episode in range(1, 30)],
         templates=(
             Template(
-                name='episode', selector='.so-panel.widget.widget_siteorigin-panels-builder',
-                db_type='shell_command', db='theoffice', table='season',
-                kws={'command': 'sudo mkdir -p '+ filepath +'/{season}/ &' +
-                     ' sudo youtube-dl -o /mnt/Movies/{season}/{episode} {url}'},
+                name='episode', selector='#Rapidvideo',
+                db_type='ShellCommand', db='theoffice', table='season',
+                kws={'command': create_dir + ' & ' + youtube_dl},
                 attrs=(
                     Attr(name='url', selector='a', func=['sel_url', 'sel_text'],
                          kws=[{}, {'needle': r'.*(s\d+e\d+)'}]),
@@ -35,7 +28,3 @@ theoffice = ScrapeModel(name='theoffice', domain='http://watchtheofficeonline.co
         )
     ),
 ])
-
-disp = Dispatcher()
-disp.add_scraper(theoffice)
-disp.run()

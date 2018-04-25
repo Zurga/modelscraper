@@ -13,7 +13,7 @@ funda = ScrapeModel(name='funda.nl', domain='http://funda.nl', num_sources=1, ph
     ],
         templates=[
             Template(name='house', selector='.search-result',
-                     db_type='mongo_db', db='funda', table='for_hire',
+                     db_type='MongoDB', db='funda', table='for_hire',
                      attrs=[
                          Attr(name='price', selector='.search-result-price',
                               func='sel_text', kws={'numbers': True}),

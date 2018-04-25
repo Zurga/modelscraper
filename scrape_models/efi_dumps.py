@@ -17,7 +17,7 @@ efi_dumps = ScrapeModel(name='efi_dumps', domain='https://ghostlyhaks.com/',
         templates=(
             Template(
                 name='forum_post', selector='.kbody tr',
-                db_type='mongo_db', db='efi_dumps', table='forum_post',
+                db_type='MongoDB', db='efi_dumps', table='forum_post',
                 attrs=(
                     Attr(name='url', selector='a.ktopic-title', func='sel_url',
                         source=Source(active=False)), # source is for next run
@@ -41,7 +41,7 @@ efi_dumps = ScrapeModel(name='efi_dumps', domain='https://ghostlyhaks.com/',
         templates=(
             Template(
                 name='forum_post', selector='a[href*=".zip"], a[href*=".tar"]',
-                db_type='mongo_db', db='efi_dumps', table='efi_dumps',
+                db_type='MongoDB', db='efi_dumps', table='efi_dumps',
                 attrs=[Attr(name='url', selector='', func='sel_url')]
             ),
         )

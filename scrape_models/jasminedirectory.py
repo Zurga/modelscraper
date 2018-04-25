@@ -13,7 +13,7 @@ category_temp = Template(name='sub_category',
                          selector='li strong a:nth-of-type(1)',
                          db='jasminedirectory',
                          table='maincats',
-                         db_type='mongo_db',
+                         db_type='MongoDB',
                          attrs=(sub_page_url,
                                 sub_page_name))
 
@@ -21,7 +21,7 @@ category_temp2 = Template(name='sub_page',
                          selector='li strong a:nth-of-type(1)',
                          db='jasminedirectory',
                          table='subcats',
-                         db_type='mongo_db',
+                         db_type='MongoDB',
                          attrs=(sub_page_url,
                                 sub_page_name))
 
@@ -36,7 +36,7 @@ website_temp = Template(name='website',
                         selector='a.featuredBox',
                         db='jasminedirectory',
                         table='websites',
-                        db_type='mongo_db',
+                        db_type='MongoDB',
                         attrs=(website_url, website_name))
 
 model = ScrapeModel(name='startpagina', domain='http://www.startpagina.nl',

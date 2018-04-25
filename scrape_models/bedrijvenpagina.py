@@ -23,7 +23,7 @@ description= Attr(name='description', selector='div[itemprop="description"] > p'
 branches = Attr(name='branches', selector='.omschrijving a', func='sel_text')
 
 company = Template(name='company', selector=None,
-                   db_type='mongo_db', db='bedrijvenpagina',
+                   db_type='MongoDB', db='bedrijvenpagina',
                    table='companies', attrs=(name, street, postal, city,
                                              telephone, website, mail,
                                              kvk, description, branches))

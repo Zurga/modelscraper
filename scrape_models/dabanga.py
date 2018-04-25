@@ -10,7 +10,7 @@ dabanga = ScrapeModel(
         templates=(
             Template(
                 name='article_url', selector='.list-item.news-item-small',
-                db_type='mongo_db', db='dabanga', table='article_urls',
+                db_type='MongoDB', db='dabanga', table='article_urls',
                 attrs=[
                     Attr(name='url', selector='a:nth-of-type(1)',
                          func='sel_url', source={'active': False}),
@@ -27,7 +27,7 @@ dabanga = ScrapeModel(
     Phase(synchronize=True,templates=[
             Template(
                 name='article', selector='#content',
-                db_type='mongo_db', db='dabanga', table='article',
+                db_type='MongoDB', db='dabanga', table='article',
                 attrs=[
                     Attr(name='title', selector='h1',
                                 func='sel_text'),

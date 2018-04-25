@@ -7,7 +7,7 @@ funda = ScrapeModel(name='funda.nl', domain='http://funda.nl', num_sources=2, ph
     Phase(sources=[models.Source(url='http://funda.nl/koop/amsterdam/'+t+'/') for
                         t in types],
         templates=[
-            Template(name='house', selector='.search-result', db_type='mongo_db',
+            Template(name='house', selector='.search-result', db_type='MongoDB',
                             db='funda', table='on_sale1',
                        attrs=[
                 Attr(name='price', selector='.search-result-price', func='sel_text',

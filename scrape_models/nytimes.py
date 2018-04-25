@@ -17,7 +17,7 @@ nytimes = ScrapeModel(name='nytimes', domain='https://www.nytimes.com/',
         templates=(
             Template(
                 name='menu', selector='#site-index-navigation li',
-                db_type='mongo_db', db='nytimes', table='menu',
+                db_type='MongoDB', db='nytimes', table='menu',
                 attrs=(
                     Attr(name='url', selector='a', func='sel_url',
                         source=Source(active=False)), # source is for next run
@@ -31,7 +31,7 @@ nytimes = ScrapeModel(name='nytimes', domain='https://www.nytimes.com/',
         templates=(
             Template(
                 name='articlelist', selector='',
-                db_type='mongo_db', db='nytimes', table='articles',
+                db_type='MongoDB', db='nytimes', table='articles',
                 attrs=(
                     Attr(name='title', selector='h1', func='sel_text'),
 
@@ -51,7 +51,7 @@ nytimes = ScrapeModel(name='nytimes', domain='https://www.nytimes.com/',
             ),
             Template(
                 name='submenu', selector='#main .subnavigation li',
-                db_type='mongo_db', db='nytimes', table='submenu',
+                db_type='MongoDB', db='nytimes', table='submenu',
                 attrs=(
                     Attr(name='url', selector='a', func='sel_url',
                         source=True), # source is for next run

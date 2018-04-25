@@ -28,7 +28,7 @@ fuelly = ScrapeModel(
         templates=[
             Template(
                 name='motorcycle', selector='.model-year-item',
-                db_type='mongo_db', db='fuelly', table='motorcycles',
+                db_type='MongoDB', db='fuelly', table='motorcycles',
                 attrs=[
                     Attr(name='name', selector='.summary-view-all-link a',
                                 func='sel_text'),

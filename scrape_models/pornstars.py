@@ -19,7 +19,7 @@ pornstars = ScrapeModel(
                                     ])
                 ]),
         Phase(source_worker=WebSource, parser=HTMLParser, templates=[
-            Template(name='pornstar', selector='.pornstarIndex li', db_type='mongo_db',
+            Template(name='pornstar', selector='.pornstarIndex li', db_type='MongoDB',
                     db='pornstars', collection='ranking', attrs=[
                         Attr(name='name', selector='.title', func='sel_text'),
                         Attr(name='rank', selector='.rank_number',

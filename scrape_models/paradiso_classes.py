@@ -11,7 +11,7 @@ paradiso = ScrapeModel(name='paradiso', domain='https://paradiso.nl', phases=[
             ])
         ]),
     Phase(templates=[
-        Template(name='event', db_type='mongo_db', db='paradiso', table='events',
+        Template(name='event', db_type='MongoDB', db='paradiso', table='events',
                 attrs=[
                     Attr(name='name', selector='meta[name=evenementts]',
                         func='sel_attr', kws={'attr': 'content'}),

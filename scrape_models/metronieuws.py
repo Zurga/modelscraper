@@ -41,7 +41,7 @@ headline_phase = Phase(
     sources=sources, n_workers=5, templates=[
         Template(
             name='headline', selector='.row', db='metronieuws',
-            db_type='mongo_db', kws={'key':'url'},
+            db_type='MongoDB', kws={'key':'url'},
             table='article_urls', attrs=[
                 Attr(name='url', selector='a.shadow-block',
                         func='sel_attr', kws={'attr': 'href'},
@@ -62,7 +62,7 @@ metro = ScrapeModel(
         Phase(sources=sources, n_workers=3, templates=[
             article(
                 selector='.artikel', db='metronieuws',
-                table='articles', db_type='mongo_db', attrs=[
+                table='articles', db_type='MongoDB', attrs=[
                     title_attr,
                     text_attr(selector='.content .field-items .field-item > p'),
                     author_attr(selector='.username'),

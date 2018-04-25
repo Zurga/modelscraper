@@ -23,7 +23,7 @@ thuisbezorgd = ScrapeModel(name='thuisbezorgd', domain='http://thuisbezorgd.nl',
             ),
             Template(
                 name='restaurant', selector='.restaurant',
-                db_type='mongo_db', db='thuisbezorgd', table='restaurants',
+                db_type='MongoDB', db='thuisbezorgd', table='restaurants',
                 attrs=(
                     Attr(name='url', selector='a.restaurantname', func='sel_url',
                                 source=Source(active=False, src_template='{}')), # source is for next run
@@ -38,7 +38,7 @@ thuisbezorgd = ScrapeModel(name='thuisbezorgd', domain='http://thuisbezorgd.nl',
         templates=(
             Template(
                 name='reviews', selector='',
-                db_type='mongo_db', db='thuisbezorgd', table='reviews',
+                db_type='MongoDB', db='thuisbezorgd', table='reviews',
                 attrs=(
                     Attr(name='url', selector='a', func='sel_url',
                                 source=Source(active=False)), # source is for next run

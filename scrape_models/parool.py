@@ -80,12 +80,12 @@ parool = ScrapeModel(
             ),
         Phase(source_worker=WebSource, parser=HTMLParser,
             templates=(
-                article_url(db_type='mongo_db', db='parool',
+                article_url(db_type='MongoDB', db='parool',
                             table='article_urls'),
                 pagination)
             ),
         Phase(source_worker=WebSource, parser=HTMLParser,
-            templates=(article(db_type='mongo_db', db='parool',
+            templates=(article(db_type='MongoDB', db='parool',
                                table='articles'),
                        )
             ),
@@ -100,14 +100,14 @@ volkskrant = ScrapeModel(
             templates=(calendar, year)
             ),
         Phase(source_worker=WebSource, n_workers=2, parser=HTMLParser,
-            templates=(article_url(db_type='mongo_db', db='volkskrant',
+            templates=(article_url(db_type='MongoDB', db='volkskrant',
                                    table='article_urls'), pagination),
             ),
         Phase(source_worker=WebSource, n_workers=3, parser=HTMLParser,
             templates=(
                 article(
                     selector='.article__main',
-                    db_type='mongo_db', db='volkskrant', table='articles',
+                    db_type='MongoDB', db='volkskrant', table='articles',
                     attrs=(
                         title_attr,
                         text_attr,
@@ -140,7 +140,7 @@ telegraaf = ScrapeModel(
             templates=(
                 article(
                     selector='.tg-article-page',
-                    db_type='mongo_db', db='telegraaf', table='articles',
+                    db_type='MongoDB', db='telegraaf', table='articles',
                     required=True,
                     preview=True,
                     attrs=(

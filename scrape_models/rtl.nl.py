@@ -31,11 +31,11 @@ rtl= ScrapeModel(
             templates=(calendar, year)
             ),
         Phase(templates=(
-                article_url(db_type='mongo_db', db='parool',
+                article_url(db_type='MongoDB', db='parool',
                             table='article_urls'),
                 pagination)
             ),
-        Phase(templates=(article(db_type='mongo_db', db='parool',
+        Phase(templates=(article(db_type='MongoDB', db='parool',
                                table='articles'),
                        )
             ),

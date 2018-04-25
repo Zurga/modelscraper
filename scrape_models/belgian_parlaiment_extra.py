@@ -29,7 +29,7 @@ wikipedia = ScrapeModel(
         ], source={'active': False, 'copy_attrs': True})
     ]),
     Phase(source_worker=WebSource, parser=HTMLParser,  templates=[
-        Template(name='politician', db_type='mongo_db', db='belgian_politics',
+        Template(name='politician', db_type='MongoDB', db='belgian_politics',
                table='politicians_extra', attrs=[
             Attr(name='name', selector='#firstHeading', func='sel_text'),
             Attr(name='text', selector='.mw-body-content', func='sel_text'),

@@ -18,7 +18,7 @@ wikipedia = ScrapeModel(
             )]
     ),
     Phase(source_worker=WebSource, parser=HTMLParser, templates=[
-        Template(name='period', db_type='mongo_db', db='belgian_politics',
+        Template(name='period', db_type='MongoDB', db='belgian_politics',
                table='politicians_per_period', attrs=[
             Attr(name='start', selector='title', func='sel_text', kws={'regex': '(\d+)-\d+',
                                                                               'numbers': True}),
@@ -42,7 +42,7 @@ wikipedia = ScrapeModel(
         ], source={'active': False, 'copy_attrs': True})
     ]),
     Phase(source_worker=WebSource, parser=HTMLParser,  templates=[
-        Template(name='politician', db_type='mongo_db', db='belgian_politics',
+        Template(name='politician', db_type='MongoDB', db='belgian_politics',
                table='politicians', attrs=[
             Attr(name='name', selector='#firstHeading', func='sel_text'),
             Attr(name='text', selector='.mw-body-content', func='sel_text'),

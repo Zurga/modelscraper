@@ -20,7 +20,7 @@ kinky =ScrapeModel(name='kinky', domain='http://www.kinky.nl/', cookies=kinkycoo
                attrs=[Attr(name='sex', value='gay')]),
     ],
         templates=[
-        Template(name='advert', selector='#advertenties > div', db_type='mongo_db', db='kinky', table='adds',
+        Template(name='advert', selector='#advertenties > div', db_type='MongoDB', db='kinky', table='adds',
                  attrs=[
                      Attr(name='phone', selector='.quickinfo > span', func='sel_text',
                           kws={'children': True, 'debug':True, 'regex': 'Mijn telefoonnummer: (.*)'}),
@@ -49,7 +49,7 @@ sexjobs =ScrapeModel(name='sexjobs', domain='http://www.sexjobs.nl/', cookies=se
             ])
         ]),
     Phase(source_worker=WebSource, parser=HTMLParser, templates=[
-        Template(name='advert', selector='article', db_type='mongo_db', db='sexjobs', table='adds',
+        Template(name='advert', selector='article', db_type='MongoDB', db='sexjobs', table='adds',
                  attrs=[
                      Attr(name='phone', selector='hidden-xs .advertentie-telefoonnummer', func='sel_text',
                           kws={'debug':True}),

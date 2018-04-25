@@ -1,22 +1,16 @@
-from dispatcher import Dispatcher
-from components import ScrapeModel, Phase, Template, Attr, Source
-from pymongo import MongoClient
-from workers import WebSource
-from parsers import HTMLParser
+from modelscraper.components import ScrapeModel, Phase, Template, Attr, Source
 
 
-cl = MongoClient()
-db = cl.erowid
-col = db.drug_report
-
-erowid = ScrapeModel(name='erowid', domain='https://www.erowid.org/experiences/',
-    num_getters=2, phases=[
-    Phase(source_worker=WebSource, parser=HTMLParser, sources=[
-        Source(url="https://www.erowid.org/experiences/exp.cgi?ShowViews=1&Cellar=0&Start=0&Max=24777")],
+list_url = "https://www.erowid.org/experiences/exp.cgi?ShowViews=1&Cellar=0&Start=0&Max=24777"
+erowid = ScrapeModel(
+    name='erowid', domain='https://www.erowid.org/experiences/',
+    num_getters=1, phases=[
+    Phase(
+        sources=[Source(url=list_url)],
         templates=(
             Template(
                 name='report_url', selector='.exp-list-table tr',
-                source={'active': False, 'copy_attrs': True},
+                source=Source(active=False, copy_attrs=True),
                 attrs=(
                     Attr(name='url', selector='td:nth-of-type(2) a',
                          func='sel_url'),
@@ -44,11 +38,11 @@ erowid = ScrapeModel(name='erowid', domain='https://www.erowid.org/experiences/'
         )
     ),
 
-    Phase(source_worker=WebSource, parser=HTMLParser,
+    Phase(
         templates=(
             Template(
                 name='drug_report', selector='',
-                db_type='mongo_db', db='erowid', table='drug_report',
+                db_type='MongoDB', db='erowid', table='drug_report',
                 attrs=(
                     Attr(name='text', selector='.report-text-surround', func='sel_text'),
                     Attr(name='weight', selector='td.bodyweight-amount', func='sel_text'),
@@ -57,7 +51,3 @@ erowid = ScrapeModel(name='erowid', domain='https://www.erowid.org/experiences/'
         )
     ),
 ])
-
-disp = Dispatcher()
-disp.add_scraper(erowid)
-disp.run()

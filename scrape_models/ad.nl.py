@@ -18,7 +18,7 @@ tags_attr = Attr(name='tags', selector='.article.tags a span',
 article = Template(
     name='article', selector='.column-content-background',
     db='nu_nl',
-    db_type='mongo_db',
+    db_type='MongoDB',
     table='articles',
     attrs=(
         title_attr,

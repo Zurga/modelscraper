@@ -13,7 +13,7 @@ npo_tv_programs = ScrapeModel(name='npo_tv_programs', domain='http://npo.nl',
         templates=(
             Template(
                 name='program', selector='.content-column.quarter',
-                db_type='mongo_db', db='npo_tv_programs', table='programs',
+                db_type='MongoDB', db='npo_tv_programs', table='programs',
                 attrs=(
                     Attr(name='title', selector='h3', func='sel_text'),
                     Attr(name='url', selector='a.full-link', func='sel_url',
@@ -28,7 +28,7 @@ npo_tv_programs = ScrapeModel(name='npo_tv_programs', domain='http://npo.nl',
         templates=(
             Template(
                 name='episodes', selector='.item-list.item-container div.item',
-                db_type='mongo_db', db='npo_tv_programs', table='episodes',
+                db_type='MongoDB', db='npo_tv_programs', table='episodes',
                 attrs=(
                     Attr(name='episode_url', selector='a', func='sel_url',
                         source=Source(active=False)), # source is for next run
