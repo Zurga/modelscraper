@@ -94,3 +94,10 @@ def depth(l):
         return 1 + max(depth(item) for item in l)
     else:
         return 0
+
+
+def padd_list(reference, to_fill, fill_type):
+    difference = len(reference) - len(to_fill)
+    if difference:
+        return [*to_fill, *[fill_type() for _ in range(difference)]]
+    return to_fill
