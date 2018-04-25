@@ -1,7 +1,7 @@
 import gzip
 import os
 import time
-from collections import defaultdict
+from collections import defaultdict, deque
 from multiprocessing import Process
 from queue import Queue, Empty
 from sys import stdout
@@ -23,21 +23,22 @@ class ScrapeWorker(Process):
 
         self.source_q = Queue()
         self.parse_q = Queue()
+        self.log_q = Queue()
         self.seen = ScalableBloomFilter()
         self.forwarded = ScalableBloomFilter()
+        self.to_forward = Deque()
         self.new_sources = []
         self.workers = []
-        self.to_forward = Deque()
         self.parser = None
         self.dbs = dict()
         self.schedule = model.schedule
         self.model = model
         self.total_time = 0
         self.lock = Lock()
+        self.logs = deque(maxlen=10)
 
         # Start all the threads necessary for storing the data
         for thread in model.db_threads:
-            print(thread)
             thread.start()
 
     def run(self):
@@ -66,28 +67,35 @@ class ScrapeWorker(Process):
 
                     start = time.time()
                     # TODO add custom template if a source has a template
-                    for template in phase.templates:
-                        template.parse(source)
-                        template.to_store()
+                    if source.templates:
+                        templates = source.templates
+                    else:
+                        templates = phase.templates
+
+                    try:
+                        for template in templates:
+                            template.parse(source)
+                            template.to_store()
+
+                            for new_source in template.gen_sources():
+                                self._add_source(new_source)
+                    except Exception as E:
+                        print(E)
+                        print(source.data)
+                        print(traceback.print_tb(sys.exc_info()[-1]))
 
                     self.total_time += time.time() - start
                     self.parsed += 1
-
-                    for source in self._gen_sources(self.model.new_sources):
-                        self._add_source(source)
-
-                    self.model.new_sources = []
-
                     self.show_progress()
                     source = self.consume_source()
-
             if not phase.repeat:
                 i += 1
+
         self._kill_workers()
         for db in self.model.dbs.values():
-            db.store_q.put(None)
+            db.in_q.put(None)
         for db in self.model.dbs.values():
-            db.store_q.join()
+            db.in_q.join()
         print('Waiting for the database')
         print('Scraper fully stopped')
 
@@ -165,32 +173,6 @@ class ScrapeWorker(Process):
                     if objct:
                         yield objct.attrs['url'].value
 
-    def _gen_sources(self, source_list):
-        for objct, attr, values in source_list:
-            for value in values:
-                # for now only "or" is supported.
-                if attr.source_condition and not \
-                        self._evaluate_condition(objct, attr):
-                        continue
-
-                attrs = []
-
-                if attr.source.copy_attrs:
-                    attrs_to_copy = attr.source.copy_attrs
-                    assert all(attr in objct for attr in attrs_to_copy)
-                    if type(attrs_to_copy) == dict:
-                        # We store the copied attributes under different names.
-                        for key, value in attrs_to_copy.items():
-                            attrs.append(Attr(name=value, value=objct[key]))
-                    else:
-                        for key in attrs_to_copy:
-                            attrs.append(Attr(name=key, value=objct[key]))
-                if attr.source.parent:
-                    _parent = Attr(name='_parent', value=(objct['url'],))
-                    attrs.append(_parent)
-
-                yield attr.source(url=value, attrs=attrs)
-
     def _add_source(self, source):
         if source.url and (source.url not in self.seen or source.duplicate) \
                 and source.url not in self.forwarded:
@@ -209,20 +191,8 @@ class ScrapeWorker(Process):
                 return True
             return False
 
-    def _evaluate_condition(self, objct, attr, **kwargs):
-        expression = ''
-
-        for operator, attrs in attr.source_condition.items():
-            expression += (' '+operator+' ').join(
-                [str(value) + c for name, c in attrs.items()
-                    for value in objct[name]])
-        if expression:
-            return eval(expression, {}, {})
-        else:
-            return False
-
     def show_progress(self):
-        os.system('clear')
+        # os.system('clear')
         info = '''
         Domain              {}
         Phase               {}
@@ -242,6 +212,7 @@ class ScrapeWorker(Process):
                           round(self.total_time / self.parsed, 3)
                           ))
 
+
     def _read_zip_file(self, zipfile):
         content = ''
         with ZipFile(BytesIO(zipfile)) as myzip:
@@ -249,10 +220,6 @@ class ScrapeWorker(Process):
                 with myzip.open(file_) as fle:
                     content += fle.read().decode('utf8')
         return content
-
-    def _read_gzip_file(self, gzfile):
-        with gzip.open(BytesIO(gzfile)) as fle:
-            return fle.read()
 
 
 class DummyScrapeWorker(ScrapeWorker):
@@ -276,22 +243,23 @@ class DummyScrapeWorker(ScrapeWorker):
             self.feed_sources(phase)
             print(self.to_parse, 'sources in queue')
             source = self.consume_source()
-            print(source.url)
-            for template in phase.templates:
-                try:
-                    template.parse(source)
-                    print(template.name)
-                    for obj in template.objects:
-                        for name, value in obj.items():
-                            print('\t', name, ':', value)
-                except Exception as E:
-                    print(E, template)
-                    print(traceback.print_tb(sys.exc_info()[-1]))
+            if source and source.data:
+                for template in phase.templates:
+                    try:
+                        template.parse(source)
+                        print(template.name)
+                        for obj in template.objects:
+                            for name, value in obj.items():
+                                print('\t', name, ':', value)
 
-            print('generated', len(self.model.new_sources), 'new sources')
-            for source in self._gen_sources(self.model.new_sources[:]):
-                if source.active == False:
-                    self._add_source(source)
+                        for new_source in template.gen_sources():
+                            if new_source.active == False:
+                                self._add_source(new_source)
+                    except Exception as E:
+                        print(E, template)
+                        print('source data', source.data)
+                        print(traceback.print_tb(sys.exc_info()[-1]))
+
             print('forwarded', len(self.to_forward))
 
             self.model.new_sources = []
