@@ -111,14 +111,10 @@ class MongoDB(BaseDatabase):
         return False
 
     #!@add_other_doc(Collection.find)
-    def read(self, template=None, url='', **kwargs):
+    def read(self, template=None, query={}, **kwargs):
         self.db = self.client[template.db]
         self.coll = self.db[template.table]
-        if url:
-            db_objects = self.coll.find({'url': url}, **kwargs)
-        else:
-            db_objects = self.coll.find(**kwargs)
-
+        db_objects = self.coll.find(query, **kwargs)
         for db_object in db_objects:
             objct = template()
             objct.attrs_from_dict(db_object)
