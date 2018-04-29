@@ -272,8 +272,7 @@ class Template(BaseModel):
 class ScrapeModel:
     def __init__(self, name='', domain='', phases: Phase=[], num_getters=1,
                  time_out=1, user_agent=None, session=requests.Session(),
-                 awaiting=False, cookies={}, schedule='',
-                 dummy=False, **kwargs):
+                 awaiting=False, cookies={}, schedule='', **kwargs):
         self.name = name
         self.domain = domain
         self.phases = phases
@@ -301,12 +300,12 @@ class ScrapeModel:
             for template in phase.templates:
                 template.prepare(self.parsers)
 
-        if dummy:
-            self.worker = ScrapeWorker(self)
-        else:
-            self.worker = DummyScrapeWorker(self)
 
-    def run(self):
+    def run(self, dummy=False):
+        if dummy:
+            self.worker = DummyScrapeWorker(self)
+        else:
+            self.worker = ScrapeWorker(self)
         self.worker.run()
 
     def set_db_threads(self, db_threads):
