@@ -1,6 +1,4 @@
-from raper.dispatcher import Dispatcher
-from raper import models
-
+from modelscraper.components import ScrapeModel, Attr, Template, Phase, Source
 data = 'sid={}&options%5B%5D=display_full_history&options%5B%5D=use_cached_data_only&action=View+Complete+Tracking+History'
 #data =
 
@@ -31,7 +29,3 @@ metro = ScrapeModel(name='landmark', domain='https://mercury.landmarkglobal.com/
         ]
     )
 ])
-
-d = Dispatcher()
-d.add_scraper(metro)
-d.run()
