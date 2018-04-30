@@ -233,6 +233,7 @@ class DummyScrapeWorker(ScrapeWorker):
 
     def run(self):
         for phase in self.model.phases:
+            print(phase)
             self.spawn_workforce(phase)
 
             if not phase.sources:
@@ -243,6 +244,7 @@ class DummyScrapeWorker(ScrapeWorker):
             print(self.to_parse, 'sources in queue')
             source = self.consume_source()
             if source and source.data:
+                print(source.url)
                 for template in phase.templates:
                     try:
                         template.parse(source)
