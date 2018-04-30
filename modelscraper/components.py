@@ -67,7 +67,11 @@ class Source(BaseModel):
     @classmethod
     def from_db(cls, template, url='url', query='', **kwargs):
         db_type = template.db_type
-        for t in db_type().read(template=template, query=query):
+
+        # Check if the database has been instantiated by the Scrapeworker
+        if isinstance(db_type, type):
+            db_type = db_type()
+        for t in db_type.read(template=template, query=query):
             attr = t.attrs.get(url, [])
             if type(attr.value) is not list:
                 values = [attr.value]
