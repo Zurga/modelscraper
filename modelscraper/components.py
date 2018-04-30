@@ -65,15 +65,16 @@ class Source(BaseModel):
             self.url = self.src_template.format(self.url)
 
     @classmethod
-    def from_db(cls, template, url='url', query=''):
+    def from_db(cls, template, url='url', query='', **kwargs):
         db_type = template.db_type
         for t in db_type().read(template=template, query=query):
-            value = t.attrs.get(url, [])
-            if type(value) is list:
-                for v in value:
-                    yield cls(url=v)
+            attr = t.attrs.get(url, [])
+            if type(attr.value) is not list:
+                values = [attr.value]
             else:
-                yield cls(url=value)
+                values = attr.value
+            for v in values:
+                yield cls(url=attr.value, **kwargs)
 
 def source_conv(source):
     if type(source) in [list, Source]:
