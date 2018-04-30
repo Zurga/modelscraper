@@ -122,6 +122,7 @@ class ProgramSource(BaseSourceWorker):
 
     def retrieve(self, source):
         function = self.function.format(source.url)
+        print(function)
         result = subprocess.run(function, shell=True,
                                 stdout=subprocess.PIPE)
         try:
