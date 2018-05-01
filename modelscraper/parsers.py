@@ -5,6 +5,7 @@ import re
 import logging
 from logging.handlers import QueueHandler
 from queue import Queue
+from urllib import parse as urlparse
 
 import lxml.html as lxhtml
 import lxml.etree as etree
@@ -28,15 +29,7 @@ class BaseParser:
     which can all be overridden in subclasses.
     '''
 
-    def __init__(self, parent=None, **kwargs):
-        if not parent:
-            raise Exception('No parent or phase was specified')
-        self.name = parent.name
-        self.domain = parent.domain
-        # Set all selectors and the functions of the attrs to the correct
-        # functions and selectors of the parser.
-        self.parent = parent
-
+    def __init__(self, **kwargs):
         for key, value in kwargs.items():
             setattr(self, key, value)
 
@@ -58,7 +51,7 @@ class BaseParser:
         If the source has a template, the data in the source is parsed
         according to that template.
         '''
-        data = self._convert_data(source.data)
+        data = self._convert_data(source)
         extracted = self._extract(data, selector)
         if not extracted:
             logging.log(logging.WARNING,
@@ -230,7 +223,8 @@ class HTMLParser(BaseParser):
         super(HTMLParser, self).__init__(**kwargs)
         self.scrapely_parser = None
 
-    def _convert_data(self, data):
+    def _convert_data(self, source):
+        data = source.data
         try:  # Create an HTML object from the returned text.
             data = lxhtml.fromstring(data)
         except ValueError:  # This happens when xml is declared in html.
@@ -245,7 +239,8 @@ class HTMLParser(BaseParser):
                         'XML syntax parsing error:',)
             return False
         else:
-            data.make_links_absolute(self.domain)
+            domain = urlparse.urlparse(source.url)
+            data.make_links_absolute(domain)
             return data
 
     def get_selector(self, selector):
@@ -439,8 +434,9 @@ class HTMLParser(BaseParser):
             self.parent._add_source(source)
 
 class JSONParser(HTMLParser):
-    def _convert_data(self, data):
-        xml = xmljson.badgerfish.etree(json.loads(data), root=etree.Element('root'))
+    def _convert_data(self, source):
+        xml = xmljson.badgerfish.etree(json.loads(source.data),
+                                       root=etree.Element('root'))
         return xml
 
     def sel_text(self, elements, **kwargs):
@@ -455,8 +451,8 @@ class TextParser(BaseParser):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
 
-    def _convert_data(self, data):
-        return data
+    def _convert_data(self, source):
+        return source.data
 
     def _extract(self, data, template):
         return str_as_tuple(data)
@@ -481,8 +477,8 @@ class CSVParser(BaseParser):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
 
-    def _convert_data(self, data):
-        return data
+    def _convert_data(self, source):
+        return source.data
 
     def _extract(self, data, template):
         return [d.split(',') for d in data.split('\n') if d]
