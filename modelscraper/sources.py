@@ -1,8 +1,9 @@
 from threading import Thread
 import time
-import requests
 import subprocess
+import importlib
 
+import requests
 from user_agent import generate_user_agent
 
 
@@ -73,14 +74,18 @@ class WebSource(BaseSourceWorker):
 
     def retrieve(self, source):
         headers = {'User-Agent': generate_user_agent()
-                    if not self.user_agent else self.user_agent}
+                    if not self.user_agent else self.user_agent,
+                   **source.kws.pop('headers', {}}
         try:
             time.sleep(self.time_out)
             func = getattr(self.session, source.method)
-            page = func(source.url, data=source.data,
-                        params=source.params,
-                        headers={**headers, # noqa
-                                    **source.headers})
+            page = func(source.url, headers=headers, **source.kws) # noqa
+
+            if page and source.parse:
+                source.data = page.text
+                return source, 1
+            else:
+                return False, -1
 
         # Retry later with a timeout,
         except requests.Timeout:
@@ -96,12 +101,6 @@ class WebSource(BaseSourceWorker):
         except Exception as E:
             print(self.__class__.__name__, id(self), E)
             return False, -1
-        else:
-            if page and source.parse:
-                source.data = page.text
-                return source, 1
-            else:
-                return False, -1
 
 
 class FileSource(BaseSourceWorker):
@@ -115,24 +114,55 @@ class FileSource(BaseSourceWorker):
 
 
 class ProgramSource(BaseSourceWorker):
-    def __init__(self, function=None, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.function = function
-        self.inits = {'function': self.function}
-
     def retrieve(self, source):
-        function = self.function.format(source.url)
+        function = source.func.format(source.url)
         print(function)
         result = subprocess.run(function, shell=True,
                                 stdout=subprocess.PIPE)
         try:
             stdout = result.stdout
             source.data = stdout.decode('utf-8')
+            return source, 1
         except Exception as E:
             logging.log(logging.WARNING, 'Could not decode the result from ' +
                         function + ':\n ' + stdout)
             return False, -1
-        return source, 1
+
+class ModuleSource(BaseSourceWorker):
+
+    """Generates data by calling another modules function."""
+
+    def __init__(self, module_name=None):
+        """@todo: to be defined1.
+
+        :module_name: @todo
+
+        """
+        BaseSourceWorker.__init__(self)
+
+        self._module_name = module_name
+        self.inits = {'module_name': self._module_name}
+
+        if self._module_name:
+            try:
+                self.module = importlib.import_module(self._module_name)
+            except ImportError:
+                print('Could not import', module_name)
+
+    def retrieve(self, source):
+        """Returns the data gotten by the source
+
+        :source: @todo
+        :returns: @todo
+
+        """
+        function = getattr(self.module, source.func)
+        try:
+            source.data = function(source.url, **source.kws)
+            return source, 1
+        except Exception as E:
+            logging.warning(' : '.join([E, source.url, str(source.kws)]))
+            return False, -1
 
 
 class APISource(BaseSourceWorker):
