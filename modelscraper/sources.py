@@ -75,7 +75,7 @@ class WebSource(BaseSourceWorker):
     def retrieve(self, source):
         headers = {'User-Agent': generate_user_agent()
                     if not self.user_agent else self.user_agent,
-                   **source.kws.pop('headers', {}}
+                   **source.kws.pop('headers', {})}
         try:
             time.sleep(self.time_out)
             func = getattr(self.session, source.method)
@@ -132,7 +132,7 @@ class ModuleSource(BaseSourceWorker):
 
     """Generates data by calling another modules function."""
 
-    def __init__(self, module_name=None):
+    def __init__(self, module_name=None, conversion=None):
         """@todo: to be defined1.
 
         :module_name: @todo
@@ -140,12 +140,14 @@ class ModuleSource(BaseSourceWorker):
         """
         BaseSourceWorker.__init__(self)
 
-        self._module_name = module_name
-        self.inits = {'module_name': self._module_name}
+        self.module_name = module_name
+        self.conversion = conversion
+        self.inits = {'module_name': self.module_name,
+                      'conversion': conversion}
 
-        if self._module_name:
+        if self.module_name:
             try:
-                self.module = importlib.import_module(self._module_name)
+                self.module = importlib.import_module(self.module_name)
             except ImportError:
                 print('Could not import', module_name)
 
@@ -159,6 +161,8 @@ class ModuleSource(BaseSourceWorker):
         function = getattr(self.module, source.func)
         try:
             source.data = function(source.url, **source.kws)
+            if self.conversion:
+                source.data = self.conversion(source.data)
             return source, 1
         except Exception as E:
             logging.warning(' : '.join([E, source.url, str(source.kws)]))
