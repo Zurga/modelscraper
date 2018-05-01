@@ -44,11 +44,9 @@ class Source(BaseModel):
     url = attr.ib('')
     active = attr.ib(True)
     attrs = attr.ib(attr.Factory(dict), convert=attr_dict, metadata={'Attr': 1})
-    method = attr.ib('get')
+    func = attr.ib('get')
+    kws = attr.ib(attr.Factory(dict))
     parse = attr.ib(True)
-    headers = attr.ib(attr.Factory(dict))
-    data = attr.ib(default='')
-    params = attr.ib(attr.Factory(dict))
     src_template = attr.ib('{}')
     retries = attr.ib(10)
     duplicate = attr.ib(False)
@@ -225,10 +223,6 @@ class Template(BaseModel):
     def attrs_from_dict(self, attrs):
         self.attrs = attr_dict((Attr(name=name, value=value) for
                       name, value in attrs.items()))
-
-    def add_attr(self, attr):
-        attr = Attr(name=name, value=value, **kwargs)
-        self.attrs[attr.name] = attr
 
     def prepare(self, parsers):
         self.parser = [parsers[p] for p in self.parser]
