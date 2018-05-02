@@ -2,6 +2,7 @@ import lxml.cssselect
 from collections import OrderedDict
 from lxml.etree import XPath
 import attr
+import types
 
 
 #TODO move the selectors to a seperate folder and/or file
@@ -54,7 +55,8 @@ def selector_converter(selector):
 
 def str_as_tuple(something):
     if something is not None:
-        if type(something) in [list, dict, tuple]:
+        if type(something) in [list, dict, tuple] or \
+                isinstance(something, types.GeneratorType):
             return something
         return (something,)
 
