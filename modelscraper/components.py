@@ -76,7 +76,7 @@ class Source(BaseModel):
             else:
                 values = attr.value
             for v in values:
-                yield cls(url=attr.value, **kwargs)
+                yield cls(url=v, **kwargs)
 
 def source_conv(source):
     if type(source) in [list, Source]:
