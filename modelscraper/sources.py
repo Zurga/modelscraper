@@ -27,6 +27,7 @@ class BaseSourceWorker(Thread):
         while True:
             start = time.time()
             source = self.in_q.get()
+            print(source)
             if source is None:
                 break
             self.retrieving = True
@@ -78,7 +79,7 @@ class WebSource(BaseSourceWorker):
                    **source.kws.pop('headers', {})}
         try:
             time.sleep(self.time_out)
-            func = getattr(self.session, source.method)
+            func = getattr(self.session, source.func)
             page = func(source.url, headers=headers, **source.kws) # noqa
 
             if page and source.parse:
@@ -116,12 +117,13 @@ class FileSource(BaseSourceWorker):
 class ProgramSource(BaseSourceWorker):
     def retrieve(self, source):
         function = source.func.format(source.url)
-        print(function)
+        print('programsource', function)
         result = subprocess.run(function, shell=True,
                                 stdout=subprocess.PIPE)
         try:
             stdout = result.stdout
             source.data = stdout.decode('utf-8')
+            print(source.data)
             return source, 1
         except Exception as E:
             logging.log(logging.WARNING, 'Could not decode the result from ' +
@@ -132,24 +134,18 @@ class ModuleSource(BaseSourceWorker):
 
     """Generates data by calling another modules function."""
 
-    def __init__(self, module_name=None, conversion=None):
+    def __init__(self, module=None, conversion=None, *args, **kwargs):
         """@todo: to be defined1.
 
         :module_name: @todo
 
         """
-        BaseSourceWorker.__init__(self)
+        super().__init__(*args, **kwargs)
 
-        self.module_name = module_name
+        self.module = module
         self.conversion = conversion
-        self.inits = {'module_name': self.module_name,
+        self.inits = {'module': self.module,
                       'conversion': conversion}
-
-        if self.module_name:
-            try:
-                self.module = importlib.import_module(self.module_name)
-            except ImportError:
-                print('Could not import', module_name)
 
     def retrieve(self, source):
         """Returns the data gotten by the source
@@ -158,7 +154,8 @@ class ModuleSource(BaseSourceWorker):
         :returns: @todo
 
         """
-        function = getattr(self.module, source.func)
+        for name in source.func.split('.'):
+            function = getattr(self.module, name)
         try:
             source.data = function(source.url, **source.kws)
             if self.conversion:
