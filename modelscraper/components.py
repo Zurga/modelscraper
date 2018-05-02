@@ -210,6 +210,7 @@ class Template(BaseModel):
             if self.objects:
                 replica.objects = self.objects[:]
             self.db_type.in_q.put(replica)
+        del self.objects
 
     def gen_sources(self):
         for attr in self.attrs:
