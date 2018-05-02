@@ -63,7 +63,7 @@ class Source(BaseModel):
             self.url = self.src_template.format(self.url)
 
     @classmethod
-    def from_db(cls, template, url='url', query='', **kwargs):
+    def from_db(cls, template, url='url', query={}, **kwargs):
         db_type = template.db_type
 
         # Check if the database has been instantiated by the Scrapeworker
@@ -82,7 +82,6 @@ def source_conv(source):
     if type(source) in [list, Source]:
         return source
     elif source or type(source) is dict:
-        print(source)
         return Source(**source) if type(source) is dict else Source()
 
 
@@ -285,7 +284,6 @@ class ScrapeModel:
         self.new_sources = []
 
         if cookies:
-            print(cookies)
             requests.utils.add_dict_to_cookiejar(self.session.cookies, cookies)
 
         for key, value in kwargs.items():
