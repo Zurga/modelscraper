@@ -27,7 +27,6 @@ class BaseSourceWorker(Thread):
         while True:
             start = time.time()
             source = self.in_q.get()
-            print(source)
             if source is None:
                 break
             self.retrieving = True
@@ -117,13 +116,11 @@ class FileSource(BaseSourceWorker):
 class ProgramSource(BaseSourceWorker):
     def retrieve(self, source):
         function = source.func.format(source.url)
-        print('programsource', function)
         result = subprocess.run(function, shell=True,
                                 stdout=subprocess.PIPE)
         try:
             stdout = result.stdout
             source.data = stdout.decode('utf-8')
-            print(source.data)
             return source, 1
         except Exception as E:
             logging.log(logging.WARNING, 'Could not decode the result from ' +
