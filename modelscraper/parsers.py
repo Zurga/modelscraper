@@ -454,7 +454,10 @@ class TextParser(BaseParser):
     def _convert_data(self, source):
         return source.data
 
-    def _extract(self, data, template):
+    def _extract(self, data, selector):
+        if selector:
+            return ((d for d in self._apply_selector(sel, data))for sel in
+                    selector)
         return str_as_tuple(data)
 
     def _apply_selector(self, selector, data):
@@ -470,7 +473,8 @@ class TextParser(BaseParser):
         """
         Selects the text from data.
         """
-        return self._sel_text([elements], **kwargs)
+        print(elements)
+        return self._sel_text(str_as_tuple(elements), **kwargs)
 
 
 class CSVParser(BaseParser):
@@ -480,7 +484,7 @@ class CSVParser(BaseParser):
     def _convert_data(self, source):
         return source.data
 
-    def _extract(self, data, template):
+    def _extract(self, data, selector):
         return [d.split(',') for d in data.split('\n') if d]
 
     def _apply_selector(self, selector, data):
