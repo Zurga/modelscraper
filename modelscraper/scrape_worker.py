@@ -102,18 +102,15 @@ class ScrapeWorker(Process):
         if phase.sources:
             if type(phase.sources) == tuple or type(phase.sources) == list:
                 for source in phase.sources:
-                    self.source_q.put(source)
-                    self.to_parse += 1
+                    self._add_source(source)
                 phase.sources = False
             else:
-                added = 0
                 for _ in range(amount):
                     try:
-                        self.source_q.put(phase.sources.send(None))
-                        added += 1
+                        source = phase.sources.send(None)
+                        self._add_source(source)
                     except StopIteration:
                         continue
-                self.to_parse += added
 
     def consume_source(self):
         """
