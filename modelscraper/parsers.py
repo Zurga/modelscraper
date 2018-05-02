@@ -473,7 +473,6 @@ class TextParser(BaseParser):
         """
         Selects the text from data.
         """
-        print(elements)
         return self._sel_text(str_as_tuple(elements), **kwargs)
 
 
