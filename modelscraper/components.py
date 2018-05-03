@@ -201,21 +201,20 @@ class Template(BaseModel):
     def attrs_to_dict(self):
         return {a.name: a.value for a in self.attrs}
 
-    def to_store(self):
+    def to_store(self, objects):
         if self.db_type:
             replica = self.__class__(
                 db=self.db, table=self.table, func=self.func, kws=self.kws,
                 name=self.name, url=self.url)
 
-            if self.objects:
-                replica.objects = self.objects[:]
+            if objects:
+                replica.objects = objects
             self.db_type.in_q.put(replica)
-        del self.objects
 
-    def gen_sources(self):
+    def gen_sources(self, objects):
         for attr in self.attrs:
             if attr.source:
-                yield from attr.gen_source(self.objects)
+                yield from attr.gen_source(objects)
         if self.source:
             if getattr(self.parser[-1], 'source_from_object', False):
                 yield self.parser[-1].source_from_object(self, objct)
@@ -257,7 +256,7 @@ class Template(BaseModel):
         else:
             selector = None
         # Create the actual objects
-        self.objects = parser.parse(source, template=self, selector=selector)
+        return parser.parse(source, template=self, selector=selector)
 
     @staticmethod
     def from_table(self, db_type, db, table, query=''):

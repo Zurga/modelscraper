@@ -72,10 +72,10 @@ class ScrapeWorker(Process):
 
                     try:
                         for template in templates:
-                            template.parse(source)
-                            template.to_store()
+                            objects = template.parse(source)
+                            template.to_store(objects)
 
-                            for new_source in template.gen_sources():
+                            for new_source in template.gen_sources(objects):
                                 self._add_source(new_source)
                     except Exception as E:
                         print(E)
@@ -244,13 +244,13 @@ class DummyScrapeWorker(ScrapeWorker):
                 print(source.url)
                 for template in phase.templates:
                     try:
-                        template.parse(source)
+                        objects = template.parse(source)
                         print(template.name)
-                        for obj in template.objects:
+                        for obj in objects:
                             for name, value in obj.items():
                                 print('\t', name, ':', value)
 
-                        for new_source in template.gen_sources():
+                        for new_source in template.gen_sources(objects):
                             if new_source.active == False:
                                 self._add_source(new_source)
                     except Exception as E:
