@@ -2,6 +2,7 @@ from threading import Thread
 import time
 import subprocess
 import importlib
+import logging
 
 import requests
 from user_agent import generate_user_agent
@@ -19,6 +20,7 @@ class BaseSourceWorker(Thread):
         self.total_time = 0
         self.visited = 0
         self.retrieving = False
+        print('started', type(self))
 
     def __call__(self, **kwargs):
         return self.__class__(**kwargs, **self.inits)  # noqa
@@ -41,7 +43,7 @@ class BaseSourceWorker(Thread):
 
             self.in_q.task_done()
             self.retrieving = False
-        print('Done')
+        print('Done', type(self))
 
     def retrieve(self):
         raise NotImplementedError
@@ -159,7 +161,7 @@ class ModuleSource(BaseSourceWorker):
                 source.data = self.conversion(source.data)
             return source, 1
         except Exception as E:
-            logging.warning(' : '.join([E, source.url, str(source.kws)]))
+            logging.warning(' : '.join([str(E), source.url, str(source.kws)]))
             return False, -1
 
 
@@ -189,5 +191,4 @@ class APISource(BaseSourceWorker):
             self.mean = self.total_time / self.visited
             self.in_q.task_done()
             self.retrieving = False
-        print('Done')
 
