@@ -32,7 +32,7 @@ class Phase(BaseModel):
     parser = attr.ib(default=HTMLParser)
     save_raw = attr.ib(default=False)
     db_type = attr.ib(default=None)
-
+    forwards = attr.ib(default=attr.Factory(list))
 
     def __attrs_post_init__(self):
         for template in self.templates:
@@ -42,7 +42,6 @@ class Phase(BaseModel):
 @attr.s
 class Source(BaseModel):
     url = attr.ib('')
-    active = attr.ib(True)
     attrs = attr.ib(attr.Factory(dict), convert=attr_dict, metadata={'Attr': 1})
     func = attr.ib('get')
     kws = attr.ib(attr.Factory(dict))
@@ -56,11 +55,16 @@ class Source(BaseModel):
     from_db = attr.ib(None, metadata={'Template': 1})
     templates = attr.ib(attr.Factory(list))
     compression = attr.ib('')
+    add_value = attr.ib('')
+    extra_data = attr.ib(attr.Factory(dict))
+    active = attr.ib(default=True)
 
+    # TODO data passing between sources will be done by adding a selector
     def __attrs_post_init__(self):
         # Apply the source template
         if self.src_template:
             self.url = self.src_template.format(self.url)
+
 
     @classmethod
     def from_db(cls, template, url='url', query={}, **kwargs):
@@ -104,6 +108,7 @@ class Attr(BaseModel):
     kws = attr.ib(default=attr.Factory(dict))
     type = attr.ib(default=None)
     arity = attr.ib(default=1)
+    forwarded = attr.ib(default=False)
 
     def __attrs_post_init__(self):
         # Ensure that the kws are encapsulated in a list with the same length
@@ -147,6 +152,13 @@ class Attr(BaseModel):
                             value=(objct['_url'],))
             attrs.append(_parent)
         return attrs
+
+    def _format_source_kws(self, source):
+        if source.add_value and source.copy_attrs:
+            for keyword, attrs in self.add_value.items():
+                values = {attr: self.attrs[attr].value[0] for attr in
+                          str_as_tuple(attrs) if self.attrs[attr].value}
+                self.kws[keyword].format(**values)
 
     def _evaluate_condition(self, objct):
         # TODO fix this ugly bit of code
@@ -209,7 +221,7 @@ class Template(BaseModel):
 
             if objects:
                 replica.objects = objects
-            self.db_type.in_q.put(replica)
+                self.db_type.in_q.put(replica)
 
     def gen_sources(self, objects):
         for attr in self.attrs:
@@ -235,9 +247,12 @@ class Template(BaseModel):
         # Set the functions of the attrs
         parser = self.parser[-1]
         for attr in self.attrs:
-            attr.func = parser.get_funcs(attr.func)
-            if attr.selector:
-                attr.selector = parser.get_selector(attr.selector)
+            if attr.forwarded:
+                del attr
+            else:
+                attr.func = parser.get_funcs(attr.func)
+                if attr.selector:
+                    attr.selector = parser.get_selector(attr.selector)
 
     def parse(self, source):
         if self.preparser:
@@ -258,13 +273,14 @@ class Template(BaseModel):
         # Create the actual objects
         return parser.parse(source, template=self, selector=selector)
 
-    @staticmethod
-    def from_table(self, db_type, db, table, query=''):
+    def query(self, query={}):
         db_type = getattr(databases, db_type)
-        yield from db_type().read(
-            self.__class__(db_type=db_type, table=table, db=db),
-            query=query
-        )
+        if isinstance(db_type, type):
+            db_type = db_type()
+        yield from db_type().read(self,query=query)
+
+    def all(self):
+        yield from self.query()
 
 
 class ScrapeModel:
