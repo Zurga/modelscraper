@@ -42,8 +42,19 @@ class BaseParser:
     def _apply_selector(self, selector, data):
         raise NotImplementedError()
 
-    def get_selector(self, model):
-        raise NotImplementedError()
+    def get_selector(self, selector):
+        '''
+        Get the selector to be the function which will get value from the source
+        or a selector defined in a subclass.
+        '''
+        if hasattr(selector, '__iter__') and 'Source' in selector:
+            selector = self._data_from_source
+        else:
+            return self._get_selector(selector)
+
+    def _data_from_source(self, selector, *args):
+        selector = selector.split('.')[-1]
+        return self.source.extra_data.get(selector)
 
     def parse(self, source, template, selector=None, gen_objects=True):
         '''
@@ -51,11 +62,12 @@ class BaseParser:
         If the source has a template, the data in the source is parsed
         according to that template.
         '''
+        self.source = source
         data = self._convert_data(source)
         extracted = self._extract(data, selector)
         if not extracted:
             logging.log(logging.WARNING,
-                        "{selector} selector of template: ".format(selector) +
+                        "{selector} selector of template: ".format(selector=selector) +
                         "{name} returned no data".format(name=template.name))
         if not gen_objects:
             return self.to_string(extracted)
@@ -129,6 +141,9 @@ class BaseParser:
         for attr in attrs:
             if not attr.func:
                 parsed = attr.value
+            elif attr.forwarded:
+                print(attr)
+                continue
             else:
                 elements = self._apply_selector(attr.selector, data)
                 parsed = self._apply_funcs(elements, attr.func, attr.kws)
@@ -179,9 +194,7 @@ class BaseParser:
         substitute: the substitute used in the replacers parameter.
         """
         if replacers:
-            replacers = str_as_tuple(replacers)
-            regex = re.compile('|'.join(replacers))
-            text = (regex.sub(substitute, t) for t in text)
+            text = map(replacers, text)
 
         if regex:
             regex = re.compile(regex)
@@ -212,15 +225,19 @@ class BaseParser:
             return None
         if type(parsed) != list:
             parsed = list(parsed)
-        return parsed[index] if index is not None else parsed
+        try:
+            return parsed[index] if index is not None else parsed
+        except IndexError:
+            print('not long enough', parsed)
+            return parsed
 
 
 class HTMLParser(BaseParser):
     '''
     A parser that is able to parse html.
     '''
-    def __init__(self, **kwargs):
-        super(HTMLParser, self).__init__(**kwargs)
+    def __init__(self, *args, **kwargs):
+        super(HTMLParser, self).__init__(*args, **kwargs)
         self.scrapely_parser = None
 
     def _convert_data(self, source):
@@ -239,11 +256,11 @@ class HTMLParser(BaseParser):
                         'XML syntax parsing error:',)
             return False
         else:
-            domain = urlparse.urlparse(source.url)
-            data.make_links_absolute(domain)
+            urlparsed = urlparse.urlparse(source.url)
+            data.make_links_absolute(urlparsed.scheme + '://' + urlparsed.netloc)
             return data
 
-    def get_selector(self, selector):
+    def _get_selector(self, selector):
         assert type(selector) is str, "selector is not a string %r" %selector
         if selector:
             if type(selector) in (CSSSelector, etree.XPath):
@@ -488,12 +505,44 @@ class CSVParser(BaseParser):
 
     def _apply_selector(self, selector, data):
         if selector:
-            return [data[selector[0]]]
+            return [data[selector]]
         return data
 
-    def get_selector(self, selector):
+    def _get_selector(self, selector):
         return selector
 
     @add_other_doc(BaseParser._sel_text)
     def sel_text(self, elements, **kwargs):
         return self._sel_text(elements, **kwargs)
+
+
+class XMLParser(HTMLParser):
+    """
+    A parser that can parse normal XML and escaped XML.
+    Contains all the functions in the HTMLParser.
+    """
+    def __init__(self, parse_escaped=True, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.parse_escaped = parse_escaped
+
+    def _convert_data(self, source):
+        data = source.data.rstrip().lstrip()
+        # Remove escaped xml
+        if self.parse_escaped:
+            data = data.replace('&lt;', '<').replace('&gt;', '>')
+
+        try:
+            etree.fromstring(data)
+        except TypeError:
+            logging.log(logging.WARNING,
+                        'Something weird has been returned by the server.')
+            logging.log(logging.WARNING, data)
+            return False
+        except etree.XMLSyntaxError:
+            logging.log(logging.WARNING,
+                        'XML syntax parsing error:',)
+            return False
+
+        urlparsed = urlparse.urlparse(source.url)
+        data.make_links_absolute(urlparsed.scheme + '://' + urlparsed.netloc)
+        return data
