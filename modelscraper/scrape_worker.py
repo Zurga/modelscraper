@@ -75,6 +75,10 @@ class ScrapeWorker(Process):
                             objects = template.parse(source)
                             template.to_store(objects)
 
+                            #for attr in phase.forwards:
+                            #    for source in attr.gen_source(objects):
+                            #        self._forward_source(source)
+
                             for new_source in template.gen_sources(objects):
                                 self._add_source(new_source)
                     except Exception as E:
@@ -89,8 +93,9 @@ class ScrapeWorker(Process):
             if not phase.repeat:
                 i += 1
 
-        self._kill_workers()
+            print('forwarded', len(self.to_forward))
 
+        self._kill_workers()
         print('Waiting for the database')
         for db in self.model.db_threads:
             db.in_q.put(None)
@@ -119,7 +124,7 @@ class ScrapeWorker(Process):
         """
         while True:
             try:
-                source = self.parse_q.get(timeout=10)
+                source = self.parse_q.get(timeout=2)
                 self.seen.add(source.url)
 
                 if source.compression == 'zip':
@@ -170,13 +175,16 @@ class ScrapeWorker(Process):
                         yield objct.attrs['url'].value
 
     def _add_source(self, source):
-        if source.url and (source.url not in self.seen or source.duplicate) \
-                and source.url not in self.forwarded:
+        if source.url and (source.url not in self.seen or source.duplicate):
             if source.active:
                 self.to_parse += 1
                 self.source_q.put(source)
                 self.seen.add(source.url)
             else:
+                self._forward_source(source)
+
+    def _forward_source(self, source):
+        if source.url and source.url not in self.forwarded:
                 self.to_forward.append(source)
                 self.forwarded.add(source.url)
 
@@ -255,7 +263,6 @@ class DummyScrapeWorker(ScrapeWorker):
                                 self._add_source(new_source)
                     except Exception as E:
                         print(E, template)
-                        print('source data', source.data)
                         print(traceback.print_tb(sys.exc_info()[-1]))
 
             print('forwarded', len(self.to_forward))
