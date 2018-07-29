@@ -1,5 +1,6 @@
 from modelscraper.components import ScrapeModel, Phase, Template, Attr, Source
 from modelscraper.parsers import JSONParser
+from modelscraper.sources import FileSource
 from .objects.products import product_name, price, nutrition, brand_name,\
     unitsize, availability, store_id, category, ingredients
 
@@ -11,6 +12,7 @@ base_url = 'https://www.ah.nl/{}'
 delegate_url = 'https://www.ah.nl/service/rest/delegate?url={}'
 table_trans = str.maketrans('[]', '<>')
 search = (Source(url=base_search.format(l)) for l in ascii_lowercase)
+test_product = (Source('data/ah_nl/products.json'),)
 
 product_selector = '//type[text() = "ProductDetailLane"]/..//type[text() = "Product"]/..'
 paragraph_selector = '//content//title[text() = "{}"]/../../../content[last()]/text/body'
@@ -23,7 +25,7 @@ product = Template(
         nutrition(
             func=['sel_text', 'custom_func', 'sel_table'],
             kws=[{}, {'function': lambda text: text.translate(table_trans),
-                      'selector': 'td'}],
+                      'selector': 'td'}, {}],
             selector=paragraph_selector.format('Voedingswaarden'),
         ),
         ingredients(selector=paragraph_selector.format("Ingrediënten")),
@@ -42,7 +44,7 @@ product_url = Attr(
     selector='navItem/link/href',
     func='sel_text',
     kws={'src_template': delegate_url},
-    source={'active': False},
+    #source={'active': False},
 )
 
 search_template = Template(
@@ -72,7 +74,8 @@ ah = ScrapeModel(
     name='ah', domain='https://www.ah.nl/',
     phases=[
         Phase(name='Search', parser=JSONParser, sources=search,
-              templates=[search_template, load_more_template]),
-        Phase(name='products', parser=JSONParser, templates=[product])
+             templates=[search_template, load_more_template]),
+        Phase(name='products',
+              parser=JSONParser, templates=[product])
     ]
 )
