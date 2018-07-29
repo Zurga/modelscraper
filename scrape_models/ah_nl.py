@@ -43,8 +43,8 @@ product_url = Attr(
     name='url',
     selector='navItem/link/href',
     func='sel_text',
-    kws={'src_template': delegate_url},
-    #source={'active': False},
+    kws={'template': delegate_url},
+    source={'active': False},
 )
 
 search_template = Template(
