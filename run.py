@@ -32,5 +32,6 @@ def main(model, dummy):
     for model in scrape_models:
         model.run(dummy=dummy)
 
+
 if __name__ == '__main__':
     main()
