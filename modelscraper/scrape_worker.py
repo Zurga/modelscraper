@@ -104,18 +104,17 @@ class ScrapeWorker(Process):
         print('Scraper fully stopped')
 
     def feed_sources(self, phase, amount=1):
-        if phase.sources:
-            if type(phase.sources) == tuple or type(phase.sources) == list:
-                for source in phase.sources:
+        if type(phase.sources) == tuple or type(phase.sources) == list:
+            for source in phase.sources:
+                self._add_source(source)
+            phase.sources = False
+        else:
+            for _ in range(amount):
+                try:
+                    source = phase.sources.send(None)
                     self._add_source(source)
-                phase.sources = False
-            else:
-                for _ in range(amount):
-                    try:
-                        source = phase.sources.send(None)
-                        self._add_source(source)
-                    except StopIteration:
-                        continue
+                except StopIteration:
+                    continue
 
     def consume_source(self):
         """
@@ -124,7 +123,7 @@ class ScrapeWorker(Process):
         """
         while True:
             try:
-                source = self.parse_q.get(timeout=2)
+                source = self.parse_q.get(timeout=5)
                 self.seen.add(source.url)
 
                 if source.compression == 'zip':
@@ -185,6 +184,7 @@ class ScrapeWorker(Process):
 
     def _forward_source(self, source):
         if source.url and source.url not in self.forwarded:
+                source.active = True
                 self.to_forward.append(source)
                 self.forwarded.add(source.url)
 
@@ -244,16 +244,14 @@ class DummyScrapeWorker(ScrapeWorker):
             if not phase.sources:
                 phase.sources = self.to_forward[:1]
 
-            self.to_forward = []
             self.feed_sources(phase)
+            self.to_forward = []
             print(self.to_parse, 'sources in queue')
             source = self.consume_source()
             if source and source.data:
-                print(source.url)
                 for template in phase.templates:
                     try:
                         objects = template.parse(source)
-                        print(template.name)
                         for obj in objects:
                             for name, value in obj.items():
                                 print('\t', name, ':', value)
