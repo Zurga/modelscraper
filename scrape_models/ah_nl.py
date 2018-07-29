@@ -71,8 +71,8 @@ load_more_template = Template(
 ah = ScrapeModel(
     name='ah', domain='https://www.ah.nl/',
     phases=[
-        Phase(parser=JSONParser, sources=search,
+        Phase(name='Search', parser=JSONParser, sources=search,
               templates=[search_template, load_more_template]),
-        Phase(parser=JSONParser, templates=[product])
+        Phase(name='products', parser=JSONParser, templates=[product])
     ]
 )
