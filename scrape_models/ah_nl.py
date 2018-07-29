@@ -41,7 +41,7 @@ product_url = Attr(
     name='url',
     selector='navItem/link/href',
     func='sel_text',
-    kws={'template': delegate_url},
+    kws={'src_template': delegate_url},
     source={'active': False},
 )
 
