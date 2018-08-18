@@ -25,7 +25,6 @@ class ScrapeWorker(Process):
         self.seen = ScalableBloomFilter()
         self.forwarded = ScalableBloomFilter()
         self.to_forward = Deque()
-        self.new_sources = []
         self.workers = []
         self.parser = None
         self.dbs = dict()
@@ -34,10 +33,6 @@ class ScrapeWorker(Process):
         self.total_time = 0
         self.lock = Lock()
         self.logs = deque(maxlen=10)
-
-        # Start all the threads necessary for storing the data
-        for thread in model.db_threads:
-            thread.start()
 
     def run(self):
         # create the threads needed to scrape
@@ -72,14 +67,19 @@ class ScrapeWorker(Process):
 
                     try:
                         for template in templates:
-                            objects = template.parse(source)
-                            template.to_store(objects)
+                            count = 0
+
+                            if template.parse(source):
+                                self.model.store_template(template)
+                            else:
+                                source.duplicate = True
+                                self._add_source(source)
 
                             #for attr in phase.forwards:
                             #    for source in attr.gen_source(objects):
                             #        self._forward_source(source)
 
-                            for new_source in template.gen_sources(objects):
+                            for new_source in template.gen_sources(template.objects):
                                 self._add_source(new_source)
                     except Exception as E:
                         print(E)
@@ -96,25 +96,21 @@ class ScrapeWorker(Process):
             print('forwarded', len(self.to_forward))
 
         self._kill_workers()
-        print('Waiting for the database')
-        for db in self.model.db_threads:
-            db.in_q.put(None)
-        for db in self.model.db_threads:
-            db.join()
+        self.model.kill_databases()
         print('Scraper fully stopped')
 
     def feed_sources(self, phase, amount=1):
-        if type(phase.sources) == tuple or type(phase.sources) == list:
-            for source in phase.sources:
-                self._add_source(source)
-            phase.sources = False
-        else:
-            for _ in range(amount):
-                try:
-                    source = phase.sources.send(None)
+        if phase.sources:
+            if type(phase.sources) == tuple or type(phase.sources) == list:
+                for source in phase.sources:
                     self._add_source(source)
-                except StopIteration:
-                    continue
+                phase.sources = False
+            else:
+                for _ in range(amount):
+                    try:
+                        self._add_source(next(phase.sources))
+                    except StopIteration:
+                        continue
 
     def consume_source(self):
         """
@@ -238,7 +234,6 @@ class DummyScrapeWorker(ScrapeWorker):
 
     def run(self):
         for phase in self.model.phases:
-            print(phase)
             self.spawn_workforce(phase)
 
             if not phase.sources:
@@ -251,12 +246,12 @@ class DummyScrapeWorker(ScrapeWorker):
             if source and source.data:
                 for template in phase.templates:
                     try:
-                        objects = template.parse(source)
-                        for obj in objects:
-                            for name, value in obj.items():
-                                print('\t', name, ':', value)
+                        if template.parse(source):
+                            for obj in template.objects:
+                                for name, value in obj.items():
+                                    print('\t', name, ':', value)
 
-                        for new_source in template.gen_sources(objects):
+                        for new_source in template.gen_sources(template.objects):
                             if new_source.active == False:
                                 self._add_source(new_source)
                     except Exception as E:
@@ -265,7 +260,6 @@ class DummyScrapeWorker(ScrapeWorker):
 
             print('forwarded', len(self.to_forward))
 
-            self.model.new_sources = []
         self._kill_workers()
 
         for db in self.model.db_threads:
