@@ -1,6 +1,6 @@
 from collections import defaultdict, ChainMap
 from datetime import datetime
-from itertools import zip_longest
+from itertools import zip_longest, chain
 from functools import partial
 import logging
 
@@ -202,7 +202,7 @@ class Attr(BaseModel):
 class Template(BaseModel):
     db = attr.ib(default=None)
     table = attr.ib(default=None)
-    db_type = attr.ib(default=None)
+    db_type = attr.ib(default=None, convert=wrap_list)
     objects = attr.ib(default=attr.Factory(list))
     urls = attr.ib(default=attr.Factory(list))
     source = attr.ib(default=None, convert=source_conv)
@@ -220,13 +220,6 @@ class Template(BaseModel):
     dated = attr.ib(default=False)
 
     def __attrs_post_init__(self):
-        if type(self.db_type) is str and self.db_type and self.db:
-            database_class = getattr(databases, self.db_type)
-            if database_class:
-                self.db_type = database_class
-            else:
-                raise Exception(self.db + 'This database is not supported')
-
         if self.url:
             self.attrs['url'] = Attr(name='url', value=self.url)
 
@@ -350,7 +343,6 @@ class ScrapeModel:
         self.user_agent = user_agent
         self.schedule = schedule
         self.dbs = dict()
-        self.new_sources = []
 
         if cookies:
             requests.utils.add_dict_to_cookiejar(self.session.cookies, cookies)
@@ -358,14 +350,20 @@ class ScrapeModel:
         for key, value in kwargs.items():
             setattr(self, key, value)
         db_threads, parsers = self.prepare_phases()
-        self.set_db_threads(db_threads)
+
+        # Map the templates to the correct database thread instance
+        self.db_threads = defaultdict(list)
+        for thread, templates in db_threads.items():
+            db_thread = getattr(databases, thread)()
+            db_thread.start()
+            for template in templates:
+                self.db_threads[template.name].append(db_thread)
 
         self.parsers = {parser: parser(parent=self) for parser in parsers}
 
         for phase in self.phases:
             for template in phase.templates:
                 template.prepare(self.parsers)
-
 
     def run(self, dummy=False):
         if dummy:
@@ -374,14 +372,18 @@ class ScrapeModel:
             self.worker = ScrapeWorker(self)
         self.worker.run()
 
-    def set_db_threads(self, db_threads):
-        self.db_threads = set()
-        for thread, templates in db_threads.items():
-            store_thread = thread()
+    def store_template(self, template):
+        for db in self.db_threads.get(template.name, []):
+            db.in_q.put(template)
 
-            for template in templates:
-                template.db_type = store_thread
-            self.db_threads.add(store_thread)
+    def kill_databases(self):
+        print('Waiting for the database')
+        for db in chain.from_iterable(self.db_threads.values()):
+            print(db)
+            db.in_q.put(None)
+        for db in chain.from_iterable(self.db_threads.values()):
+            print(db)
+            db.join()
 
     def prepare_phases(self):
         '''
@@ -396,7 +398,8 @@ class ScrapeModel:
                 for parser in template.parser:
                     parsers.add(parser)
                 if template.db_type:
-                    db_threads[template.db_type].append(template)
+                    for db_type in template.db_type:
+                        db_threads[db_type].append(template)
         return db_threads, parsers
 
     def check_functions(self, template, phase):
