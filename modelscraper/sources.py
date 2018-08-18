@@ -20,7 +20,6 @@ class BaseSourceWorker(Thread):
         self.total_time = 0
         self.visited = 0
         self.retrieving = False
-        print('started', type(self))
 
     def __call__(self, **kwargs):
         return self.__class__(**kwargs, **self.inits)  # noqa
@@ -43,7 +42,6 @@ class BaseSourceWorker(Thread):
 
             self.in_q.task_done()
             self.retrieving = False
-        print('Done', type(self))
 
     def retrieve(self):
         raise NotImplementedError
