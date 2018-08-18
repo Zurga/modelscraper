@@ -261,9 +261,4 @@ class DummyScrapeWorker(ScrapeWorker):
             print('forwarded', len(self.to_forward))
 
         self._kill_workers()
-
-        for db in self.model.db_threads:
-            db.in_q.put(None)
-        for db in self.model.db_threads:
-            db.join()
-        print('Scraper fully stopped')
+        self.model.kill_databases()
