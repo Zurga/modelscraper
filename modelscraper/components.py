@@ -1,5 +1,8 @@
-from collections import defaultdict
+from collections import defaultdict, ChainMap
+from datetime import datetime
 from itertools import zip_longest
+from functools import partial
+import logging
 
 import requests
 import attr
@@ -42,7 +45,8 @@ class Phase(BaseModel):
 @attr.s
 class Source(BaseModel):
     url = attr.ib('')
-    attrs = attr.ib(attr.Factory(dict), convert=attr_dict, metadata={'Attr': 1})
+    attrs = attr.ib(attr.Factory(dict), convert=attr_dict,
+                    metadata={'Attr': 1})
     func = attr.ib('get')
     kws = attr.ib(attr.Factory(dict))
     parse = attr.ib(True)
@@ -52,7 +56,6 @@ class Source(BaseModel):
     copy_attrs = attr.ib(None, convert=str_as_tuple)
     attr_condition = attr.ib('')
     parent = attr.ib(False)
-    from_db = attr.ib(None, metadata={'Template': 1})
     templates = attr.ib(attr.Factory(list))
     compression = attr.ib('')
     add_value = attr.ib('')
@@ -92,9 +95,10 @@ def source_conv(source):
 @attr.s
 class Attr(BaseModel):
     '''
-    An Attr is used to hold a value as an attribute for a template.
-    The value for the attribute is obtained by applying the func
-    on the element obtained through the selector.
+    An Attr is used to hold a value for a template.
+    This value is created by selecting data from the source using the selector,
+    after which the "func" is called on the selected data.
+
     '''
     selector = attr.ib(default=None)
     name = attr.ib(default=None)
@@ -120,12 +124,23 @@ class Attr(BaseModel):
                 self.kws = [*self.kws, *[{} for _ in range(difference)]]
 
     def __call__(self, **kwargs):
-        new_kws = kwargs.get('kws')
+        new_kws = kwargs.get('kws', {})
         if new_kws:
             new_kws = wrap_list(new_kws)
             kwargs['kws'] = [{**old, **new} for new, old in
                             zip_longest(new_kws, self.kws, fillvalue={})]
+        # TODO maybe a ChainMap here?
         return self.__class__(**{**self.__dict__, **kwargs})  # noqa
+
+    def __getstate__(self):
+        state = {}
+        state['name'] = self.name
+        state['type'] = self.type
+        return state
+
+    def __setstate__(self, state):
+        print('state', state)
+        self.__dict__.update(state)
 
     def gen_source(self, objects):
         for objct in objects:
@@ -135,9 +150,16 @@ class Attr(BaseModel):
                     dup = self.source(url=value, attrs=attrs)
                     yield dup
 
+    def set_func(self, parser):
+        self.func = [partial(getattr(parser, func), **kw)
+                    if type(func) == str
+                    else func
+                    for func, kw in zip(self.func, self.kws)]
+
     def _copy_attrs(self, objct):
         attrs = []
         if not self.source or not self.source.copy_attrs:
+            print('not returning any attrs')
             return attrs
         assert all(attr in objct for attr in self.source.copy_attrs)
         if type(self.source.copy_attrs) == dict:
@@ -181,7 +203,8 @@ class Template(BaseModel):
     db = attr.ib(default=None)
     table = attr.ib(default=None)
     db_type = attr.ib(default=None)
-    objects = attr.ib(init=False)
+    objects = attr.ib(default=attr.Factory(list))
+    urls = attr.ib(default=attr.Factory(list))
     source = attr.ib(default=None, convert=source_conv)
     func = attr.ib(default='create')
     kws = attr.ib(default=attr.Factory(dict))
@@ -194,6 +217,7 @@ class Template(BaseModel):
     url = attr.ib(default='')
     parser = attr.ib(default=False, convert=wrap_list)
     preparser = attr.ib(default=None)
+    dated = attr.ib(default=False)
 
     def __attrs_post_init__(self):
         if type(self.db_type) is str and self.db_type and self.db:
@@ -213,15 +237,17 @@ class Template(BaseModel):
     def attrs_to_dict(self):
         return {a.name: a.value for a in self.attrs}
 
-    def to_store(self, objects):
-        if self.db_type:
-            replica = self.__class__(
-                db=self.db, table=self.table, func=self.func, kws=self.kws,
-                name=self.name, url=self.url)
+    def __getstate__(self):
+        pickled = ['attrs', 'db', 'table', 'func', 'kws',
+                   'name', 'url', 'objects', 'urls']
+        return {p: self.__dict__[p] for p in pickled}
 
-            if objects:
-                replica.objects = objects
-                self.db_type.in_q.put(replica)
+    def __setstate__(self, state):
+        self.__dict__.update(state)
+
+    def to_store(self):
+        if self.db_type and self.objects:
+            self.db_type.in_q.put(self)
 
     def gen_sources(self, objects):
         for attr in self.attrs:
@@ -235,8 +261,13 @@ class Template(BaseModel):
         self.attrs = attr_dict((Attr(name=name, value=value) for
                       name, value in attrs.items()))
 
-    def prepare(self, parsers):
-        self.parser = [parsers[p] for p in self.parser]
+    def prepare(self, parsers=[]):
+        # Instantiate the parser if none was provided
+        if not parsers:
+            self.parser = [p() for p in self.parser]
+        else:
+            self.parser = [parsers[p] for p in self.parser]
+
         if self.selector:
             if len(self.parser) > 1:
                 self.selector = [parser.get_selector(selector)
@@ -244,15 +275,19 @@ class Template(BaseModel):
                                 zip_longest(self.parser, self.selector)]
             else:
                 self.selector = [self.parser[0].get_selector(self.selector)]
+
         # Set the functions of the attrs
         parser = self.parser[-1]
+        forwarded = []
         for attr in self.attrs:
             if attr.forwarded:
-                del attr
+                forwarded.append(attr.name)
             else:
-                attr.func = parser.get_funcs(attr.func)
+                attr.set_func(parser)
                 if attr.selector:
                     attr.selector = parser.get_selector(attr.selector)
+        for attr in forwarded:
+            self.attrs.pop(attr)
 
     def parse(self, source):
         if self.preparser:
@@ -270,8 +305,22 @@ class Template(BaseModel):
             selector = self.selector[-1]
         else:
             selector = None
+
+        count = 0
         # Create the actual objects
-        return parser.parse(source, template=self, selector=selector)
+        for i, obj in enumerate(parser.parse(source, template=self,
+                                             selector=selector)):
+            count += i
+            url = self.urls.extend(obj.get('url', obj.get('_url')))
+            if self.dated:
+                obj['_date'] = str(datetime.now())
+
+            self.objects.append(obj)
+
+        if not count and self.required:
+            print(selector, 'yielded nothing, quitting.')
+            return False
+        return True
 
     def query(self, query={}):
         db_type = getattr(databases, db_type)
@@ -286,7 +335,11 @@ class Template(BaseModel):
 class ScrapeModel:
     def __init__(self, name='', domain='', phases: Phase=[], num_getters=1,
                  time_out=1, user_agent=None, session=requests.Session(),
-                 awaiting=False, cookies={}, schedule='', **kwargs):
+                 awaiting=False, cookies={}, schedule='', logfile='', **kwargs):
+        # Set up the logging
+        if logfile:
+            logging.basicConfig(filename=logfile, level=logging.WARNING)
+
         self.name = name
         self.domain = domain
         self.phases = phases
