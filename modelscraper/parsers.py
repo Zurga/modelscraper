@@ -6,6 +6,7 @@ import logging
 from logging.handlers import QueueHandler
 from queue import Queue
 from urllib import parse as urlparse
+from functools import singledispatch
 
 import lxml.html as lxhtml
 import lxml.etree as etree
@@ -73,10 +74,6 @@ class BaseParser:
             return self.to_string(extracted)
         objects = list(self._gen_objects(template, extracted, source))
 
-        if not objects and template.required:
-            print(template.selector, 'yielded nothing, quitting.')
-            source.duplicate = True
-            self.parent._add_source(source)
 
         return objects
 
@@ -105,7 +102,8 @@ class BaseParser:
             objct = {'_url': source.url}
 
             # Set predefined attributes from the source.
-            for attr in source.attrs.values():
+            for attr in source.attrs:
+                print('copying', attr)
                 objct[attr.name] = attr.value
 
             no_value = 0
@@ -146,7 +144,7 @@ class BaseParser:
                 continue
             else:
                 elements = self._apply_selector(attr.selector, data)
-                parsed = self._apply_funcs(elements, attr.func, attr.kws)
+                parsed = self._apply_funcs(elements, attr.func)
 
                 if attr.type and type(parsed) != attr.type:
                     logging.log(
@@ -155,12 +153,12 @@ class BaseParser:
                         str(parsed))
             yield attr.name, parsed
 
-    def _apply_funcs(self, elements, parse_funcs, kws):
+    def _apply_funcs(self, elements, parse_funcs):
         if len(parse_funcs) == 1 and hasattr(parse_funcs, '__iter__'):
-            return parse_funcs[0](elements, **kws[0])
+            return [parse_funcs[0](el) for el in elements]
         else:
-            parsed = parse_funcs[0](elements, **kws[0])
-            return self._apply_funcs(parsed, parse_funcs[1:], kws[1:])
+            parsed = [parse_funcs[0](el) for el in elements]
+            return self._apply_funcs(parsed, parse_funcs[1:])
 
     # TODO check if this belongs here...
     def _copy_attrs(self, objct, source):
@@ -198,38 +196,27 @@ class BaseParser:
 
         if regex:
             regex = re.compile(regex)
-            text = (f for t in text for f in regex.findall(t))
+            text = [found for found in regex.findall(text)]
 
         if needle:
-            matches = [re.match(re.escape(needle), t) for t in text]
-            if not all(matches):
-                return [None]
+            matches = re.match(re.escape(needle), text)
+            if not matches:
+                return None
 
-        if numbers:
-            text = (int(''.join([c for c in t if c.isdigit() and c]))
-                    for t in text if t and any(map(str.isdigit, t)))
+        if numbers and any(map(str.isdigit, text)):
+            text = int(''.join([c for c in text if c.isdigit() and c]))
+
         if template:
-            text = (template.format(t) for t in text)
+            text = template.format(text)
         return text
 
     def _sel_text(self, text, index=None, **kwargs):
         '''
         Selects and modifies text.
         '''
-        stripped = (t.lstrip().rstrip() for t in text if t)
+        stripped = text.lstrip().rstrip()
         text = self.modify_text(stripped, **kwargs)
-        return self._value(text, index)
-
-    def _value(self, parsed, index=None):
-        if not parsed:
-            return None
-        if type(parsed) != list:
-            parsed = list(parsed)
-        try:
-            return parsed[index] if index is not None else parsed
-        except IndexError:
-            print('not long enough', parsed)
-            return parsed
+        return text
 
 
 class HTMLParser(BaseParser):
@@ -343,18 +330,20 @@ class HTMLParser(BaseParser):
                 elements.append(elem)
         return elements
 
-    @add_other_doc(BaseParser.modify_text)
-    def sel_text(self, elements, all_text=True, **kwargs):  # noqa
+    def sel_text(self, element, all_text=True, **kwargs):
         '''
-        Select all text for a given selector.
+        Select all text for a given element.
         '''
-        if all_text:
-            text = (el.text_content() for el in elements)
+        if type(element) != str:
+            if all_text:
+                text = element.text_content()
+            else:
+                text = element.text
         else:
-            text = (el.text for el in elements)
+            text = element
         return self._sel_text(text, **kwargs)
 
-    def sel_table(self, elements, columns: int=2, offset: int=0):
+    def sel_table(self, element, columns: int=2, offset: int=0):
         '''
         Parses a nxn table into a dictionary.
         Works best when the input is a td selector.
@@ -372,6 +361,7 @@ class HTMLParser(BaseParser):
             sel_table(html=lxml.etree, selector=CSSSelector('table td'),
                     columns=2, offset=0)
         '''
+        elements = element.cssselect('td')
         keys = [el.text for el in elements[offset::columns]]
         values = [el.text for el in elements[1::columns]]
         return dict(zip(keys, values))
@@ -388,7 +378,7 @@ class HTMLParser(BaseParser):
         return self._value(selected, index)
 
     @add_other_doc(BaseParser.modify_text)
-    def sel_attr(self, elements, attr: str='', **kwargs):
+    def sel_attr(self, element, attr: str='', **kwargs):
         '''
         Extract an attribute of an HTML element. Will return
         a list of attributes if multiple tags match the
@@ -398,30 +388,30 @@ class HTMLParser(BaseParser):
         the BaseParser.modify_text method.
         '''
 
-        attrs = (el.attrib.get(attr) for el in elements)
-        return self._sel_text(attrs, **kwargs)
+        attr = element.attrib.get(attr)
+        return self._sel_text(attr, **kwargs)
 
     @add_other_doc(BaseParser.modify_text)
-    def sel_url(self, elements, index: int=None, **kwargs):
-        return self.sel_attr(elements, attr='href', index=index, **kwargs)
+    def sel_url(self, element, index: int=None, **kwargs):
+        return self.sel_attr(element, attr='href', index=index, **kwargs)
 
-    def sel_date(self, elements, fmt: str='YYYYmmdd', attr: str=None, index:
+    def sel_date(self, element, fmt: str='YYYYmmdd', attr: str=None, index:
                  int=None):
         '''
         Returns a python date object with the specified format.
         '''
         if attr:
-            date = sel_attr(html, selector, attr=attr, index=index)
+            date = sel_attr(element, selector, attr=attr, index=index)
         else:
-            date = sel_text(html, selector, index=index)
+            date = sel_text(element, selector, index=index)
         if date:
             return datetime.strptime(date, fmt)
 
-    def sel_exists(self, elements, key: str='', index: int=None):
+    def sel_exists(self, element, key: str='', index: int=None):
         '''
         Return True if a keyword is in the selector text,
         '''
-        text = self.sel_text(elements)
+        text = self.sel_text(element)
         if text:
             if key in text:
                 return True
@@ -430,13 +420,13 @@ class HTMLParser(BaseParser):
     def sel_raw_html(self, elements):
         return [el.raw_html for el in elements]
 
-    def sel_js_array(self, elements, var_name='', var_type=None):
+    def sel_js_array(self, element, var_name='', var_type=None):
         var_regex = 'var\s*'+var_name+'\s*=\s*(?:new Array\(|\[)(.*)(?:\)|\]);'
-        array_string = self.sel_text(elements, regex=var_regex, index=0)
+        array_string = self.sel_text(element, regex=var_regex)
         if array_string:
             if var_type:
-                return list(map(var_type, array_string.split(',')))
-            return array_string.split(',')
+                return list(map(var_type, array_string[0].split(',')))
+            return array_string[0].split(',')
 
     def fill_form(self, elements, fields={}, attrs=[]):
         from .components import Source
@@ -456,8 +446,11 @@ class JSONParser(HTMLParser):
                                        root=etree.Element('root'))
         return xml
 
-    def sel_text(self, elements, **kwargs):
-        return self._sel_text((el.text for el in elements), **kwargs)
+    def sel_text(self, element, **kwargs):
+        return self._sel_text(element.text, **kwargs)
+
+    def sel_dict(self, element):
+        return {child.tag: child.text for child in element.getchildren()}
 
     def to_string(self, data):
         data = (etree.tostring(d).decode() for d in data)
