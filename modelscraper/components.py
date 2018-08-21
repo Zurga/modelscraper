@@ -159,7 +159,6 @@ class Attr(BaseModel):
     def _copy_attrs(self, objct):
         attrs = []
         if not self.source or not self.source.copy_attrs:
-            print('not returning any attrs')
             return attrs
         assert all(attr in objct for attr in self.source.copy_attrs)
         if type(self.source.copy_attrs) == dict:
