@@ -48,7 +48,6 @@ class BaseDatabase(Process, metaclass=MetaDatabase):
                 res = func(template, **template.kws)
             self.result_q.put(res)
             self.in_q.task_done()
-        print('stopping store')
 
 class MongoDB(BaseDatabase):
     '''
@@ -253,7 +252,6 @@ class Sqlite(BaseDatabase):
             schema = self.create_schema(template)
             with connection:
                 for line in schema:
-                    print(line)
                     connection.execute(line)
             self.template_schema[template.name] = schema
 
@@ -271,7 +269,7 @@ class Sqlite(BaseDatabase):
             # We select all the ids that were inserted to create the attrs
             urls_ids = dict(self.urls_ids(template))
 
-            for attr in template.objects[0].keys():
+            for attr in template.attrs.keys():
                 table_name = '_'.join((template.table, attr))
 
                 for obj, url in zip(template.objects, template.urls):
@@ -285,7 +283,6 @@ class Sqlite(BaseDatabase):
         urls_ids = []
         with self.connect(template) as con:
             for url in template.urls:
-                print('getting', url)
                 urls_ids.extend(con.execute(id_query, (url,)).fetchall())
         return urls_ids
 
