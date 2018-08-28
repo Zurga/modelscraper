@@ -52,7 +52,6 @@ def selector_converter(selector):
             raise Exception('This value for a selector was not understood',
                             selector)
 
-
 def str_as_tuple(something):
     if something is not None:
         if type(something) in [list, dict, tuple] or \
