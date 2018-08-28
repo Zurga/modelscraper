@@ -17,6 +17,7 @@ from scrapely import Scraper
 import xmljson
 
 from .helpers import str_as_tuple, add_other_doc, wrap_list
+from .selectors import ORCSSSelector
 
 
 logger = logging.getLogger(__name__)
@@ -43,6 +44,9 @@ class BaseParser:
     def _apply_selector(self, selector, data):
         raise NotImplementedError()
 
+    def to_string(self, data):
+        return str(data)
+
     def get_selector(self, selector):
         '''
         Get the selector to be the function which will get value from the source
@@ -57,14 +61,13 @@ class BaseParser:
         selector = selector.split('.')[-1]
         return self.source.extra_data.get(selector)
 
-    def parse(self, source, template, selector=None, gen_objects=True):
+    def parse(self, url, data, template, selector=None, gen_objects=True):
         '''
         Generator that parses a source based on a template.
         If the source has a template, the data in the source is parsed
         according to that template.
         '''
-        self.source = source
-        data = self._convert_data(source)
+        data = self._convert_data(url, data)
         extracted = self._extract(data, selector)
         if not extracted:
             logging.log(logging.WARNING,
@@ -72,10 +75,7 @@ class BaseParser:
                         "{name} returned no data".format(name=template.name))
         if not gen_objects:
             return self.to_string(extracted)
-        objects = list(self._gen_objects(template, extracted, source))
-
-
-        return objects
+        yield from self._gen_objects(url, template, extracted)
 
     def get_funcs(self, func_names):
         functions = []
@@ -91,7 +91,7 @@ class BaseParser:
             print(f)
         return tuple(getattr(self, f) for f in func_names)
 
-    def _gen_objects(self, template, extracted, source):
+    def _gen_objects(self, url, template, extracted):
         '''
         Create objects from parsed data using the functions
         defined in the scrape model. Also calls the functions
@@ -99,12 +99,14 @@ class BaseParser:
         _source_from_object).
         '''
         for data in extracted:
-            objct = {'_url': source.url}
+            objct = {'_url': url}
 
             # Set predefined attributes from the source.
-            for attr in source.attrs:
+            '''
+            for attr in template.source.attrs:
                 print('copying', attr)
                 objct[attr.name] = attr.value
+            '''
 
             no_value = 0
 
@@ -120,12 +122,12 @@ class BaseParser:
 
             # We want to count how many attrs return None
             # Don't return anything if we have no values for the attributes
-            if no_value == len(objct) - len(source.attrs):
+            if no_value == len(objct):
                 if getattr(self, '_fallback', None) and False:
                     logging.log(logging.WARNING,
                                 'Template {} has failed, attempting to' +
                                 ' use the fallback'.format(template.name))
-                    for objct in self._fallback(template, extracted, source):
+                    for objct in self._fallback(template, extracted, data):
                         yield objct
                     continue
                 else:
@@ -139,7 +141,7 @@ class BaseParser:
         for attr in attrs:
             if not attr.func:
                 parsed = attr.value
-            elif attr.forwarded:
+            elif attr.transfers:
                 print(attr)
                 continue
             else:
@@ -227,8 +229,7 @@ class HTMLParser(BaseParser):
         super(HTMLParser, self).__init__(*args, **kwargs)
         self.scrapely_parser = None
 
-    def _convert_data(self, source):
-        data = source.data
+    def _convert_data(self, url, data):
         try:  # Create an HTML object from the returned text.
             data = lxhtml.fromstring(data)
         except ValueError:  # This happens when xml is declared in html.
@@ -243,16 +244,16 @@ class HTMLParser(BaseParser):
                         'XML syntax parsing error:',)
             return False
         else:
-            urlparsed = urlparse.urlparse(source.url)
+            urlparsed = urlparse.urlparse(url)
             data.make_links_absolute(urlparsed.scheme + '://' + urlparsed.netloc)
             return data
 
     def _get_selector(self, selector):
-        assert type(selector) is str, "selector is not a string %r" %selector
         if selector:
-            if type(selector) in (CSSSelector, etree.XPath):
+            if type(selector) in (CSSSelector, ORCSSSelector, etree.XPath):
                 return selector
             else:
+                assert type(selector) is str, "selector is not a string %r" %selector
                 try:
                     return CSSSelector(selector)
                 except SelectorSyntaxError:
@@ -441,8 +442,8 @@ class HTMLParser(BaseParser):
             self.parent._add_source(source)
 
 class JSONParser(HTMLParser):
-    def _convert_data(self, source):
-        xml = xmljson.badgerfish.etree(json.loads(source.data),
+    def _convert_data(self, url, data):
+        xml = xmljson.badgerfish.etree(json.loads(data),
                                        root=etree.Element('root'))
         return xml
 
@@ -461,37 +462,38 @@ class TextParser(BaseParser):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
 
-    def _convert_data(self, source):
-        return source.data
+    def _convert_data(self, url, data):
+        return data
 
     def _extract(self, data, selector):
         if selector:
-            return ((d for d in self._apply_selector(sel, data))for sel in
-                    selector)
+            print(selector)
+            return ((d for d in self._apply_selector(sel, data)) for sel in selector)
         return str_as_tuple(data)
 
     def _apply_selector(self, selector, data):
         if selector:
+            print(selector)
             return data.split(selector)
         return data
 
     def get_selector(self, selector):
-        return str_as_tuple(selector)
+        return selector
 
     @add_other_doc(BaseParser._sel_text)
     def sel_text(self, elements, **kwargs):
         """
         Selects the text from data.
         """
-        return self._sel_text(str_as_tuple(elements), **kwargs)
+        return self._sel_text(elements, **kwargs)
 
 
 class CSVParser(BaseParser):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
 
-    def _convert_data(self, source):
-        return source.data
+    def _convert_data(self, url, data):
+        return data
 
     def _extract(self, data, selector):
         return [d.split(',') for d in data.split('\n') if d]
@@ -518,8 +520,8 @@ class XMLParser(HTMLParser):
         super().__init__(*args, **kwargs)
         self.parse_escaped = parse_escaped
 
-    def _convert_data(self, source):
-        data = source.data.rstrip().lstrip()
+    def _convert_data(self, url, data):
+        data = data.rstrip().lstrip()
         # Remove escaped xml
         if self.parse_escaped:
             data = data.replace('&lt;', '<').replace('&gt;', '>')
