@@ -1,10 +1,11 @@
 import attr
+from attr import Factory
 import importlib
 import logging
 import subprocess
 import time
 from queue import Queue, Empty
-from threading import Thread
+from threading import Thread, BoundedSemaphore
 
 from user_agent import generate_user_agent
 import requests
@@ -20,26 +21,41 @@ class Source(object):
     compression = attr.ib('')
     duplicate = attr.ib(False)
     func = attr.ib('get')
-    kws = attr.ib(attr.Factory(dict))
+    kws = attr.ib(Factory(dict))
     n_workers = attr.ib(default=1)
-    in_q = attr.ib(attr.Factory(Queue))
-    out_q = attr.ib(attr.Factory(Queue))
+    in_q = attr.ib(Factory(Queue))
+    out_q = attr.ib(Factory(Queue))
     url_template = attr.ib('{}')
-    urls = attr.ib(attr.Factory(list))
-    seen = attr.ib(attr.Factory(ScalableBloomFilter))
+    urls = attr.ib(Factory(list))
+    seen = attr.ib(Factory(ScalableBloomFilter))
     to_parse = attr.ib(0)
     lock = attr.ib(None)
-    attrs = attr.ib(attr.Factory(list))
+    _semaphore = attr.ib(None)
+    attrs = attr.ib(Factory(list))
 
-    def __attrs_post_init__(self):
-        # Initialize the worker
+    @property
+    def semaphore(self):
+        return self._semaphore
+
+    @semaphore.setter
+    def semaphore(self, semaphore):
+        if semaphore._value == self.n_workers:
+            self._semaphore = semaphore
+        else:
+            self._semaphore = BoundedSemaphore(self.n_workers)
+        self.initialize_workers()
+
+    def initialize_workers(self):
         self.workers = [
             self.source_worker(parent=self, id=1, in_q=self.in_q,
-                               out_q=self.out_q, lock=self.lock,
+                               out_q=self.out_q, semaphore=self._semaphore,
                                to_parse=self.to_parse)
             for _ in range(self.n_workers)]
+
         for worker in self.workers:
             worker.start()
+
+    def __attrs_post_init__(self):
         self.url_amount = int((self.n_workers / 2) + 2)
         if not self.urls:
             self.received = False
@@ -65,10 +81,10 @@ class Source(object):
                 yield cls(url=v, **kwargs)
 
     def __iter__(self):
-        print('consume')
+        assert self.workers, "No workers have been started, call 'initialize_workers'"
         self.consume()
         try:
-            url, attrs, data = self.out_q.get(timeout=2)
+            url, attrs, data = self.out_q.get(timeout=1)
             print('__iter__', url)
             self.out_q.task_done()
             yield url, attrs, data
@@ -118,8 +134,14 @@ class WebSource(Source):
     session = attr.ib(requests.Session())
     domain = attr.ib('')
     user_agent = attr.ib('')
-    cookies = attr.ib(attr.Factory(dict))
+    cookies = attr.ib(Factory(dict))
     time_out = attr.ib(1)
+    json_key = attr.ib('')
+
+    def __attrs_post_init__(self):
+        if self.cookies:
+            requests.utils.add_dict_to_cookiejar(self.session.cookies,
+                                                 self.cookies)
 
 class FileSource(Source):
     source_worker = FileSourceWorker
