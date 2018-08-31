@@ -2,14 +2,15 @@ from collections import defaultdict, ChainMap
 from datetime import datetime
 from itertools import zip_longest, chain
 from functools import partial
+from threading import BoundedSemaphore
+from zipfile import ZipFile
 import logging
 
 import attr
 
 from .parsers import HTMLParser
-from .helpers import selector_converter, attr_dict, str_as_tuple, wrap_list
+from .helpers import attr_dict, str_as_tuple, wrap_list
 from . import databases
-#from .scrape_worker import ScrapeWorker, DummyScrapeWorker
 
 
 @attr.s
@@ -31,7 +32,6 @@ class Attr(BaseModel):
     An Attr is used to hold a value for a template.
     This value is created by selecting data from the source using the selector,
     after which the "func" is called on the selected data.
-
     '''
     func = attr.ib(default=None, convert=str_as_tuple)
     value = attr.ib(default=None)
@@ -68,13 +68,6 @@ class Attr(BaseModel):
 
     def __setstate__(self, state):
         self.__dict__.update(state)
-
-    # Pass the attrs along as dicts in copy attrs
-    def gen_source(self, objects, transfers):
-        for objct in objects:
-            if self._evaluate_condition(objct):
-                urls = objct.get(self.name, [])
-                yield urls
 
     def set_func(self, parser):
         self.func = [partial(getattr(parser, func), **kw)
@@ -116,7 +109,7 @@ class Template(BaseModel):
     parser = attr.ib(default=HTMLParser, convert=wrap_list)
     preparser = attr.ib(default=None)
     required = attr.ib(default=False)
-    source = attr.ib(default=None)
+    source = attr.ib(default=None, convert=wrap_list)
     table = attr.ib(default=None)
     url = attr.ib(default='')
     urls = attr.ib(default=attr.Factory(list))
@@ -152,10 +145,6 @@ class Template(BaseModel):
     def __setstate__(self, state):
         self.__dict__.update(state)
 
-    def to_store(self):
-        if self.db_type and self.objects:
-            self.db_type.in_q.put(self)
-
     def gen_source(self, objects):
         for attr in self.emit_attrs:
             for objct in objects:
@@ -164,10 +153,14 @@ class Template(BaseModel):
                         attrs = {key: objct[key] for key in self.transfers}
                         attr.emits.add_source(url, attrs)
 
-        # TODO fix this to new spec
-        #if self.emits:
-        #    if getattr(self.parser[-1], 'source_from_object', False):
-        #        yield self.parser[-1].source_from_object(self, objct)
+        if self.emits:
+            for objct in objects:
+                url = objct.get('url', False)
+                if url:
+                    self.emits.add_source(url, objct)
+                else:
+                    warning = 'No url is specified for object {}. Cannot emit source.'
+                    logging.warning(warning.format(self.name))
 
     def attrs_from_dict(self, attrs):
         self.attrs = attr_dict((Attr(name=name, value=value) for
@@ -248,25 +241,24 @@ class Template(BaseModel):
 
 
 class ScrapeModel:
-    def __init__(self, name='', templates=[], num_getters=1,
+    def __init__(self, name='', templates=[], num_sources=1,
                   awaiting=False, schedule='', logfile='', **kwargs):
-        # Set up the logging
-        if logfile:
-            logging.basicConfig(filename=logfile, level=logging.WARNING)
-
         self.name = name
         self.templates = templates
-        self.num_getters = num_getters
+        self.num_sources = num_sources
         self.awaiting = awaiting
         self.schedule = schedule
         self.dbs = dict()
         self.sources = {}
 
-        # if cookies:
-        #     requests.utils.add_dict_to_cookiejar(self.session.cookies, cookies)
+        # Set up the logging
+        if logfile:
+            logging.basicConfig(filename=logfile, level=logging.WARNING)
 
         for key, value in kwargs.items():
             setattr(self, key, value)
+
+        # Populate lists of the databases used, the parsers and the sources
         db_threads, parsers, sources = self.prepare_templates()
 
         # Map the templates to the correct database thread instance
@@ -277,32 +269,53 @@ class ScrapeModel:
             for template in templates:
                 self.db_threads[template.name].append(db_thread)
 
+        # Map the templates to instances of these parser classes.
         self.parsers = {parser: parser(parent=self) for parser in parsers}
 
+        # Set the parsers in the templates themselves.
         for template in self.templates:
             template.prepare(self.parsers)
 
+        # Create an index of all the sources used in the model and map them
+        # to the templates that parse the data from the sources.
         self.sources_templates = defaultdict(list)
         for template in self.templates:
-            self.sources_templates[template.source].append(template)
+            for source in template.source:
+                self.sources_templates[source].append(template)
+
+        # Restrict the amount of source workers working at the same time.
+        self.semaphore = BoundedSemaphore(self.num_sources)
+        for source in self.sources_templates:
+            source.semaphore = self.semaphore
+
+        self.validate()
+
+    def validate(self):
+        """
+        A valid model contains Templates where each Template parses at least one source,
+        if a Template or an Attr emits a source, this source is also used in at least
+        one Template.
+        """
+        unused_source = "The attr {} emits a source which is not used by any Template"
+        for template in self.templates:
+            for attr in template.emit_attrs:
+                assert attr.emits in self.sources_templates,\
+                    unused_source.format(attr.name)
 
     def run(self, dummy=False):
         while self.sources_templates:
             empty = []
             for source, templates in self.sources_templates.items():
                 for res in source:
-                    print('got from', source.name, res)
                     if res:
                         for template in templates:
                             template.parse(*res)
-                            print(template.name, template.objects)
                             template.gen_source(template.objects)
                             self.store_template(template)
                     elif res is None:
                         empty.append(source)
             if empty:
                 for source in empty:
-                    print(source.name, 'deleted')
                     source.in_q.put(None)
                     self.sources_templates.pop(source)
         self.kill_databases()
