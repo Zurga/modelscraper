@@ -10,22 +10,30 @@ import requests
 from user_agent import generate_user_agent
 
 
+def _read_zip_file(zipfile):
+    content = ''
+    with ZipFile(BytesIO(zipfile)) as myzip:
+        for file_ in myzip.namelist():
+            with myzip.open(file_) as fle:
+                content += fle.read().decode('utf8')
+    return content
+
+
 class BaseSourceWorker(Thread):
-    def __init__(self, parent, id=None, in_q=None, out_q=None, lock=None, to_parse=None):
+    def __init__(
+            self, parent, id=None, in_q=None, out_q=None,
+            to_parse=None, semaphore=None):
         super().__init__()
         self.parent = parent
         self.id = id
         self.in_q = in_q
         self.out_q = out_q
-        self.lock = lock
         self.to_parse = to_parse
         self.mean =0
         self.total_time = 0
         self.visited = 0
         self.retrieving = False
-
-    def __call__(self, **kwargs):
-        return self.__class__(**kwargs, **self.inits)  # noqa
+        self.semaphore = semaphore
 
     def run(self):
         print('started source worker', self)
@@ -35,15 +43,15 @@ class BaseSourceWorker(Thread):
             if item is None:
                 break
             url, attrs = item
-            self.retrieving = True
-            data, increment = self.retrieve(url)
+            with self.semaphore:
+                self.retrieving = True
+                data, increment = self.retrieve(url)
             self._recalculate_mean(start)
 
             if data:
+                if self.parent.compression == 'zip':
+                    data = self._read_zip_file(source.data)
                 self.out_q.put((url, attrs, data))
-
-            #with self.lock:
-            #    self.to_parse += increment
 
             self.in_q.task_done()
             self.retrieving = False
@@ -63,19 +71,20 @@ class WebSourceWorker(BaseSourceWorker):
     It will place all items in its queue into the out_q specified.
     For use without parent Thread supply keyword arguments: name, domain, in_q,
     '''
-    def __init__(self, retries=10, session=requests.Session(), time_out=0.3,
-                 user_agent='', *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.retries = retries
-        self.session = session
-        self.time_out = time_out
-        self.user_agent = user_agent
-        self.inits = {
-            'session': self.session,
-            'time_out': self.time_out,
-            'retries': self.retries,
-            'user_agent': self.user_agent,
-        }
+    def __init__(self, parent, *args, **kwargs):
+        super().__init__(parent, *args, **kwargs)
+        self.retries = parent.retries
+        self.session = parent.session
+        self.time_out = parent.time_out
+        self.user_agent = parent.user_agent
+
+    def extract_json(self, response):
+        data = response.json()
+        for key in self.json_key:
+            data = data.get(key, {})
+            if not data:
+                logging.warning('JSON key {} failed'.format(key))
+        return data, 1
 
     def retrieve(self, url):
         headers = {'User-Agent': generate_user_agent()
@@ -84,10 +93,14 @@ class WebSourceWorker(BaseSourceWorker):
         try:
             time.sleep(self.time_out)
             func = getattr(self.session, self.parent.func)
-            page = func(url, headers=headers, **self.parent.kws) # noqa
+            response = func(url, headers=headers, **self.parent.kws) # noqa
 
-            if page:
-                return page.text, 1
+            if response:
+                if self.json_key:
+                    data = self.extract_json(response)
+                else:
+                    data = page.text
+                return data, 1
             else:
                 return False, -1
 
@@ -168,10 +181,10 @@ class ModuleSourceWorker(BaseSourceWorker):
 
 
 class APISourceWorker(BaseSourceWorker):
-    def __init__(self, api_function=None, batch=1, **kwargs):
-        super().__init__(**kwargs)
-        self.api_function = api_function
-        self.batch = batch
+    def __init__(self, parent, *args, **kwargs):
+        super().__init__(parent, *args, **kwargs)
+        self.api_function = parent.api_function
+        self.batch = parent.batch
 
     def retrieve_batch(self, urls):
         return self.api_function(urls[0] if type(urls) == list else urls)
@@ -193,4 +206,3 @@ class APISourceWorker(BaseSourceWorker):
             self.mean = self.total_time / self.visited
             self.in_q.task_done()
             self.retrieving = False
-
