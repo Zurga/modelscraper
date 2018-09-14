@@ -265,13 +265,8 @@ class HTMLParser(BaseParser):
 
         return None
 
-    def custom_func(self, elements, function, selector=""):
-        elements = (lxhtml.fromstring(function(el)) for el in elements)
-        if selector:
-            selector = self.get_selector(selector)
-            selected = [s for el in elements for s in selector(el)]
-            return selected
-        return list(elements)
+    def custom_func(self, element, function):
+        return  lxhtml.fromstring(function(element))
 
     def _apply_selector(self, selector, data):
         if selector:
