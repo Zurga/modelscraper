@@ -30,8 +30,8 @@ def main(model, dummy):
     scrape_models = (model for model in imported
                      if type(model) == ScrapeModel)
     for model in scrape_models:
-        model.run(dummy=dummy)
-
+        model.dummy = dummy
+        model.start()
 
 if __name__ == '__main__':
     main()
