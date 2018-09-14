@@ -76,7 +76,7 @@ class BaseDatabase(object):
         self.in_q = JoinableQueue()
 
     def check_forbidden_chars(self, key):
-        if any(c in key for c in forbidden_chars):
+        if any(c in key for c in self.forbidden_chars):
             raise Exception(forbidden_characters.format(str(forbidden_chars),
                                                         str(key)))
 
