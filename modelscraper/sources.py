@@ -1,37 +1,45 @@
-import attr
-from attr import Factory
-import importlib
+from multiprocessing import JoinableQueue
+from queue import Empty
+from threading import BoundedSemaphore
 import logging
-import subprocess
-import time
-from queue import Queue, Empty
-from threading import Thread, BoundedSemaphore
+import types
 
-from user_agent import generate_user_agent
 import requests
+from user_agent import generate_user_agent
 from pybloom_live import ScalableBloomFilter
 
+from .helpers import str_as_tuple
 from .source_workers import WebSourceWorker, FileSourceWorker, \
     ProgramSourceWorker, ModuleSourceWorker, APISourceWorker
 
 
-@attr.s(hash='in_q')
 class Source(object):
-    name = attr.ib('')
-    compression = attr.ib('')
-    duplicate = attr.ib(False)
-    func = attr.ib('get')
-    kws = attr.ib(Factory(dict))
-    n_workers = attr.ib(default=1)
-    in_q = attr.ib(Factory(Queue))
-    out_q = attr.ib(Factory(Queue))
-    url_template = attr.ib('{}')
-    urls = attr.ib(Factory(list))
-    seen = attr.ib(Factory(ScalableBloomFilter))
-    to_parse = attr.ib(0)
-    lock = attr.ib(None)
-    _semaphore = attr.ib(None)
-    attrs = attr.ib(Factory(list))
+    def __init__(self, name='', kws={}, attrs=[], url_template='{}',
+                 urls=[], test_urls=[], n_workers=1, compression='',
+                 kwargs_format={}, duplicate=False, repeat=False):
+        self.attrs = attrs
+        self.compression = compression
+        self.duplicate = duplicate
+        self.kwargs_format = kwargs_format
+        self.kws = kws
+        self.n_workers = n_workers
+        self.name = name
+        self.repeat = repeat
+        self.url_template = url_template
+        self.urls = urls
+
+        self.in_q = JoinableQueue()
+        self.out_q = JoinableQueue()
+        self.kwargs = []
+        self.seen = ScalableBloomFilter()
+        self.test_urls = str_as_tuple(test_urls)
+        self._semaphore = BoundedSemaphore(self.n_workers)
+        self.url_amount = int((self.n_workers / 2) + 10)
+        self.to_parse = 0
+        if not self.urls:
+            self.received = False
+        else:
+            self.received = True
 
     @property
     def semaphore(self):
@@ -49,18 +57,11 @@ class Source(object):
         self.workers = [
             self.source_worker(parent=self, id=1, in_q=self.in_q,
                                out_q=self.out_q, semaphore=self._semaphore,
-                               to_parse=self.to_parse)
+                               )
             for _ in range(self.n_workers)]
 
         for worker in self.workers:
             worker.start()
-
-    def __attrs_post_init__(self):
-        self.url_amount = int((self.n_workers / 2) + 2)
-        if not self.urls:
-            self.received = False
-        else:
-            self.received = True
 
     @classmethod
     def from_db(cls, template, url='url', query={}, **kwargs):
@@ -80,71 +81,133 @@ class Source(object):
             for v in values:
                 yield cls(url=v, **kwargs)
 
-    def __iter__(self):
-        assert self.workers, "No workers have been started, call 'initialize_workers'"
+    def get_source(self):
+        assert self.workers, "No workers have been started, call \
+            'initialize_workers'"
         self.consume()
+
         try:
             url, attrs, data = self.out_q.get(timeout=1)
-            print('__iter__', url)
             self.out_q.task_done()
-            yield url, attrs, data
+            self.to_parse -= 1
+            return url, attrs, data
         except Empty:
-            print(self.name, 'is empty')
-            if self.received and not all(w.retrieving for w in self.workers):
+            if self.received and not self.to_parse and not all(
+                    w.retrieving for w in self.workers):
                 print('stopping source', self.name)
-                yield None
+                for worker in self.workers:
+                    self.in_q.put(None)
+                for worker in self.workers:
+                    worker.join()
+                return False
+        return None
 
     def consume(self):
-        if self.urls:
-            if type(self.urls) is list:
-                for _ in range(self.url_amount):
+        for _ in range(self.url_amount):
+            if self.urls:
+                if type(self.urls) is list:
                     try:
                         url = self.urls.pop()
                     except IndexError:
                         self.urls = False
-            else:
-                for _ in range(self.url_amount):
+                        break
+                elif isinstance(self.urls, types.GeneratorType):
                     try:
                         url = next(self.urls)
                     except StopIteration:
                         self.urls = False
+                        break
 
-            if self.attrs and type(self.attrs) is list:
-                attrs = self.attrs.pop()
-            else:
-                attrs = {}
+                if self.attrs and type(self.attrs) is list:
+                    attrs = self.attrs.pop()
+                else:
+                    attrs = {}
+                kwargs = self.get_kwargs()
 
-            url = self.url_template.format(url)
-            self.in_q.put((url, attrs))
-            self.seen.add(url)
+                url = self.url_template.format(url)
+                self.in_q.put((url, attrs, kwargs))
+                self.to_parse += 1
+                self.seen.add(url)
 
-    def add_source(self, url, attrs):
+    def add_source(self, url, attrs, objct={}):
         self.received = True
         url = self.url_template.format(url)
         if url not in self.seen or self.repeat:
-            print('adding', url)
-            self.in_q.put((url, attrs))
+            kwargs = self.get_kwargs(objct)
+            self.in_q.put((url, attrs, kwargs))
+            self.to_parse += 1
             self.seen.add(url)
-            print(self.in_q.qsize())
 
-@attr.s
+    def get_kwargs(self, objct=None):
+        kwargs = {}
+        for key in self.kwargs:
+            value = getattr(key, self)
+            if value:
+                if type(value) is list:
+                    value = value.pop(0)
+                elif type(value) is dict:
+                    kwargs[key] = value
+                    continue
+                else:
+                    try:
+                        value = next(value)
+                    except StopIteration:
+                        continue
+
+                if objct and key in self.kwargs_format:
+                    value = value.format(**{k:objct[k] for k in
+                                            self.kwargs_format[key]})
+                kwargs[key] = value
+        return kwargs
+
 class WebSource(Source):
+    kwargs = ('headers', 'data', 'form', 'params')
     source_worker = WebSourceWorker
-    retries = attr.ib(10)
-    session = attr.ib(requests.Session())
-    domain = attr.ib('')
-    user_agent = attr.ib('')
-    cookies = attr.ib(Factory(dict))
-    time_out = attr.ib(1)
-    json_key = attr.ib('')
 
-    def __attrs_post_init__(self):
+    def __init__(self, cookies=None, data=[], domain='', form=[],
+                 func='get', headers={}, json_key='', params=[],
+                 retries=10, session=requests.Session(),
+                 time_out=1, user_agent='', *args, **kwargs):
+        print(args, kwargs)
+        super().__init__(*args, **kwargs)
+        self.cookies = cookies
+        self.data = data
+        self.domain = domain
+        self.form = form
+        self.func = func
+        self.headers = headers
+        self.json_key = json_key
+        self.params = params
+        self.retries = retries
+        self.session = session
+        self.time_out = time_out
+        self.user_agent = user_agent
+
         if self.cookies:
+            print('cookies', self.cookies)
             requests.utils.add_dict_to_cookiejar(self.session.cookies,
                                                  self.cookies)
 
+    def get_kwargs(self, objct=None):
+        if not self.user_agent:
+            user_agent = generate_user_agent()
+        else:
+            user_agent = self.user_agent
+        kwargs = {
+            'headers': {
+                'User-Agent': user_agent
+            },
+            **super().get_kwargs(objct)}
+        return kwargs
+
+    def add_source(self, url, attrs, objct):
+        if self.domain in url:
+            super().add_source(url, attrs, objct)
+
 class FileSource(Source):
     source_worker = FileSourceWorker
+    kwargs = ['buffering']
+    func = open
 
 class ProgramSource(Source):
     source_worker = ProgramSourceWorker
