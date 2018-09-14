@@ -1,13 +1,11 @@
 from threading import Thread
 import time
 import subprocess
-import importlib
 import logging
 import traceback
 import sys
 
 import requests
-from user_agent import generate_user_agent
 
 
 def _read_zip_file(zipfile):
@@ -20,38 +18,35 @@ def _read_zip_file(zipfile):
 
 
 class BaseSourceWorker(Thread):
-    def __init__(
-            self, parent, id=None, in_q=None, out_q=None,
-            to_parse=None, semaphore=None):
+    def __init__(self, parent, id=None, in_q=None, out_q=None,
+                 semaphore=None):
         super().__init__()
         self.parent = parent
         self.id = id
         self.in_q = in_q
         self.out_q = out_q
-        self.to_parse = to_parse
-        self.mean =0
+        self.mean = 0
         self.total_time = 0
         self.visited = 0
         self.retrieving = False
         self.semaphore = semaphore
 
     def run(self):
-        print('started source worker', self)
         while True:
             start = time.time()
             item = self.in_q.get()
             if item is None:
+                print('stopping source worker', self)
                 break
-            url, attrs = item
+            url, attrs, kwargs = item
             with self.semaphore:
                 self.retrieving = True
-                data, increment = self.retrieve(url)
+                data, increment = self.retrieve(url, kwargs)
             self._recalculate_mean(start)
 
-            if data:
-                if self.parent.compression == 'zip':
-                    data = self._read_zip_file(source.data)
-                self.out_q.put((url, attrs, data))
+            if self.parent.compression == 'zip':
+                data = self._read_zip_file(source.data)
+            self.out_q.put((url, attrs, data))
 
             self.in_q.task_done()
             self.retrieving = False
@@ -67,40 +62,16 @@ class BaseSourceWorker(Thread):
 
 class WebSourceWorker(BaseSourceWorker):
     '''
-    This class is used as a downloader for pages.
-    It will place all items in its queue into the out_q specified.
-    For use without parent Thread supply keyword arguments: name, domain, in_q,
+    The Worker class for the WebSource. Largely a wrapper around the requests
+    module.
     '''
-    def __init__(self, parent, *args, **kwargs):
-        super().__init__(parent, *args, **kwargs)
-        self.retries = parent.retries
-        self.session = parent.session
-        self.time_out = parent.time_out
-        self.user_agent = parent.user_agent
-
-    def extract_json(self, response):
-        data = response.json()
-        for key in self.json_key:
-            data = data.get(key, {})
-            if not data:
-                logging.warning('JSON key {} failed'.format(key))
-        return data, 1
-
-    def retrieve(self, url):
-        headers = {'User-Agent': generate_user_agent()
-                   if not self.user_agent else self.user_agent,
-                   **self.parent.kws.pop('headers', {})}
+    def retrieve(self, url, kwargs):
+        time.sleep(self.parent.time_out)
+        func = getattr(self.parent.session, self.parent.func)
         try:
-            time.sleep(self.time_out)
-            func = getattr(self.session, self.parent.func)
-            response = func(url, headers=headers, **self.parent.kws) # noqa
-
+            response = func(url, **kwargs)
             if response:
-                if self.json_key:
-                    data = self.extract_json(response)
-                else:
-                    data = page.text
-                return data, 1
+                return response.text, 1
             else:
                 return False, -1
 
@@ -122,9 +93,9 @@ class WebSourceWorker(BaseSourceWorker):
 
 
 class FileSourceWorker(BaseSourceWorker):
-    def retrieve(self, url):
+    def retrieve(self, url, kwargs):
         try:
-            with open(url) as fle:
+            with open(url, **kwargs) as fle:
                 return fle.read(), 1
         except FileNotFoundError:
             print('file not found', url)
@@ -132,7 +103,7 @@ class FileSourceWorker(BaseSourceWorker):
 
 
 class ProgramSourceWorker(BaseSourceWorker):
-    def retrieve(self, url):
+    def retrieve(self, url, kwargs):
         function = self.parent.func.format(url)
         result = subprocess.run(function, shell=True,
                                 stdout=subprocess.PIPE)
@@ -143,6 +114,7 @@ class ProgramSourceWorker(BaseSourceWorker):
             logging.log(logging.WARNING, 'Could not decode the result from ' +
                         function + ':\n ' + stdout)
             return False, -1
+
 
 class ModuleSourceWorker(BaseSourceWorker):
 
@@ -161,7 +133,7 @@ class ModuleSourceWorker(BaseSourceWorker):
         self.inits = {'module': self.module,
                       'conversion': conversion}
 
-    def retrieve(self, url):
+    def retrieve(self, url, kwargs):
         """Returns the data gotten by the source
 
         :source: @todo
