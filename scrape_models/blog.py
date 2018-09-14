@@ -1,4 +1,5 @@
-from modelscraper.components import ScrapeModel, Phase, Template, Attr, Source
+from modelscraper.components import ScrapeModel, Template, Attr
+from modelscraper.sources import WebSource
 
 text = Attr(name='text', func='sel_html')
 title = Attr(name='title', func='sel_text')
@@ -23,7 +24,16 @@ article = Template(
     db='news', db_type='MongoDB'
 )
 
+article_url = Attr(name='url', func='sel_url')
+
+tweakers_article_source = WebSource()
+tweakers_list = Template(
+    selector='',
+    attrs=[article_url(selector='', emits=tweakers_article_source)]
+)
+
 tweakers = article(
+    source=tweakers_article_source,
     table='tweakers.net',
     selector='#contentArea',
     attrs=(
@@ -36,7 +46,13 @@ tweakers = article(
         related(selector='.relatedContentItems'),
     ))
 
+tweakers_article_source = WebSource()
+tweakers_list = Template(
+    selector='',
+    attrs=[article_url(selector='', emits=tweakers_article_source)]
+)
 security = article(
+    source=WebSource(),
     table='security.nl',
     selector='.posting_body_container',
     attrs=(
@@ -49,7 +65,13 @@ security = article(
         related,
     ))
 
+tweakers_article_source = WebSource()
+tweakers_list = Template(
+    selector='',
+    attrs=[article_url(selector='', emits=tweakers_article_source)]
+)
 nos_nl = article(
+    source=WebSource(),
     table='nos.nl',
     attrs=(
         text(selector='.article_body p'),
@@ -62,7 +84,13 @@ nos_nl = article(
         author(selector='.bio__name'),
     ))
 
+tweakers_article_source = WebSource()
+tweakers_list = Template(
+    selector='',
+    attrs=[article_url(selector='', emits=tweakers_article_source)]
+)
 nu_nl = article(
+    source=WebSource(),
     table='nu.nl',
     selector='.column-content-background',
     attrs=(
@@ -74,5 +102,3 @@ nu_nl = article(
         pictures,
         related,
     ))
-
-
