@@ -3,22 +3,26 @@ from datetime import datetime
 from itertools import zip_longest, chain
 from functools import partial
 from threading import BoundedSemaphore
-from zipfile import ZipFile
+from multiprocessing import Process
 import logging
+import pprint
 
-import attr
 
 from .parsers import HTMLParser
-from .helpers import attr_dict, str_as_tuple, wrap_list
+from .helpers import str_as_tuple, wrap_list
 from . import databases
 
 
-@attr.s
+pp = pprint.PrettyPrinter(indent=4)
+forbidden_characters = 'These characters {} cannot be in the name {}'
+
+
 class BaseModel(object):
-    emits = attr.ib(default=None)
-    kws = attr.ib(default=attr.Factory(dict))
-    name = attr.ib(default=None)
-    selector = attr.ib(default=None)
+    def __init__(self, emits=None, kws={}, name=None, selector=None):
+        self.emits = emits
+        self.kws = kws
+        self.name = name
+        self.selector = selector
 
     def _replicate(self, **kwargs):
         return self.__class__(**kwargs)
@@ -26,23 +30,26 @@ class BaseModel(object):
     def __call__(self, **kwargs):
         return self.__class__(**{**self.__dict__, **kwargs})  # noqa
 
-@attr.s
+
 class Attr(BaseModel):
     '''
     An Attr is used to hold a value for a template.
     This value is created by selecting data from the source using the selector,
     after which the "func" is called on the selected data.
     '''
-    func = attr.ib(default=None, convert=str_as_tuple)
-    value = attr.ib(default=None)
-    attr_condition = attr.ib(default={})
-    source_condition = attr.ib(default={})
-    type = attr.ib(default=None)
-    arity = attr.ib(default=1)
-    from_source = attr.ib(default=False)
-    transfers = attr.ib(False)
 
-    def __attrs_post_init__(self):
+    def __init__(self, func=None, value=None, attr_condition={}, source_condition={},
+                 type=None, arity=1, from_source=False, transfers=False, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.func = str_as_tuple(func)
+        self.value = value
+        self.attr_condition = attr_condition
+        self.source_condition = source_condition
+        self.type = type
+        self.arity = arity
+        self.from_source = from_source
+        self.transfers = transfers
+
         # Ensure that the kws are encapsulated in a list with the same length
         # as the funcs.
         if self.func:
@@ -68,6 +75,13 @@ class Attr(BaseModel):
 
     def __setstate__(self, state):
         self.__dict__.update(state)
+
+    def set_name(self):
+        for name, var in globals().items():
+            print(name, var)
+            if self == var:
+                print(name, var)
+                self.name = name
 
     def set_func(self, parser):
         self.func = [partial(getattr(parser, func), **kw)
@@ -98,23 +112,40 @@ class Attr(BaseModel):
         return True
 
 
-@attr.s
-class Template(BaseModel):
-    attrs = attr.ib(default=attr.Factory(dict), convert=attr_dict)
-    dated = attr.ib(default=False)
-    db = attr.ib(default=None)
-    db_type = attr.ib(default=None, convert=wrap_list)
-    func = attr.ib(default='create')
-    objects = attr.ib(default=attr.Factory(list))
-    parser = attr.ib(default=HTMLParser, convert=wrap_list)
-    preparser = attr.ib(default=None)
-    required = attr.ib(default=False)
-    source = attr.ib(default=None, convert=wrap_list)
-    table = attr.ib(default=None)
-    url = attr.ib(default='')
-    urls = attr.ib(default=attr.Factory(list))
+class AttrDict(dict):
+    def __iter__(self):
+        for val in self.values():
+            yield val
 
-    def __attrs_post_init__(self):
+
+def attr_dict(attrs):
+    if type(attrs) == AttrDict:
+        return attrs
+    attrs_dict = AttrDict()
+    for attr_item in attrs:
+        attrs_dict[attr_item.name] = attr_item
+    return attrs_dict
+
+
+class Template(BaseModel):
+    def __init__(self, attrs=[], dated=False, database=[], func='create',
+                 parser=HTMLParser, preparser=None, required=False,
+                 source=None, table='', url='', *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.attrs = attr_dict(attrs)
+        self.dated = dated
+        self.database = wrap_list(database)
+        self.func = func
+        self.parser = wrap_list(parser)
+        self.preparser = preparser
+        self.required = required
+        self.source = wrap_list(source)
+        self.table = table
+        self.url = url
+
+        self.urls = []
+        self.objects = []
+
         if self.url:
             self.attrs['url'] = Attr(name='url', value=self.url)
 
@@ -126,8 +157,14 @@ class Template(BaseModel):
 
     def validate(self):
         # Validate the functions of the attrs
+        forbidden_chars = [char for db in self.database for char in
+                           db.forbidden_chars]
         for parser in self.parser:
             for attr in [a for a in self.attrs if not a.from_source]:
+                if any(c in attr.name for c in forbidden_chars):
+                    raise Exception(
+                        forbidden_characters.format(str(forbidden_chars),
+                                                    str(attr.name)))
                 for func in attr.func:
                     if not getattr(parser, func, False):
                         raise Exception(
@@ -138,7 +175,7 @@ class Template(BaseModel):
         return {a.name: a.value for a in self.attrs}
 
     def __getstate__(self):
-        pickled = ['attrs', 'db', 'table', 'func', 'kws',
+        pickled = ['attrs', 'table', 'func', 'kws',
                    'name', 'url', 'objects', 'urls']
         return {p: self.__dict__[p] for p in pickled}
 
@@ -151,7 +188,7 @@ class Template(BaseModel):
                 if attr._evaluate_condition(objct):
                     for url in objct[attr.name]:
                         attrs = {key: objct[key] for key in self.transfers}
-                        attr.emits.add_source(url, attrs)
+                        attr.emits.add_source(url, attrs, objct)
 
         if self.emits:
             for objct in objects:
@@ -161,6 +198,7 @@ class Template(BaseModel):
                 else:
                     warning = 'No url is specified for object {}. Cannot emit source.'
                     logging.warning(warning.format(self.name))
+        return True
 
     def attrs_from_dict(self, attrs):
         self.attrs = attr_dict((Attr(name=name, value=value) for
@@ -195,7 +233,7 @@ class Template(BaseModel):
         for attr in forwarded:
             self.attrs.pop(attr)
 
-    def parse(self, url, attrs, data):
+    def parse(self, url, attrs, data, verbose=False):
         if self.preparser:
             data = self.preparser(data)
         if len(self.parser) > 1:
@@ -228,8 +266,16 @@ class Template(BaseModel):
         if not count and self.required:
             print(selector, 'yielded nothing, quitting.')
             return False
+        else:
+            if verbose:
+                print(self.name)
+                pp.pprint(self.objects)
+            if self.objects:
+                for db in self.database:
+                    db.worker.in_q.put(self)
         return True
 
+    # TODO fix to new database spec
     def query(self, query={}):
         db_type = getattr(databases, db_type)
         if isinstance(db_type, type):
@@ -240,16 +286,17 @@ class Template(BaseModel):
         yield from self.query()
 
 
-class ScrapeModel:
-    def __init__(self, name='', templates=[], num_sources=1,
-                  awaiting=False, schedule='', logfile='', **kwargs):
+class ScrapeModel():
+    def __init__(self, name='', templates=[], num_sources=1, awaiting=False,
+                 schedule='', logfile='', dummy=False, **kwargs):
+        super().__init__()
         self.name = name
         self.templates = templates
         self.num_sources = num_sources
         self.awaiting = awaiting
         self.schedule = schedule
-        self.dbs = dict()
         self.sources = {}
+        self._dummy = dummy
 
         # Set up the logging
         if logfile:
@@ -259,15 +306,7 @@ class ScrapeModel:
             setattr(self, key, value)
 
         # Populate lists of the databases used, the parsers and the sources
-        db_threads, parsers, sources = self.prepare_templates()
-
-        # Map the templates to the correct database thread instance
-        self.db_threads = defaultdict(list)
-        for thread, templates in db_threads.items():
-            db_thread = getattr(databases, thread)()
-            db_thread.start()
-            for template in templates:
-                self.db_threads[template.name].append(db_thread)
+        parsers, sources = self.prepare_templates()
 
         # Map the templates to instances of these parser classes.
         self.parsers = {parser: parser(parent=self) for parser in parsers}
@@ -302,74 +341,104 @@ class ScrapeModel:
                 assert attr.emits in self.sources_templates,\
                     unused_source.format(attr.name)
 
-    def run(self, dummy=False):
+    @property
+    def dummy(self):
+        return self._dummy
+
+    @dummy.setter
+    def dummy(self, value):
+        if value:
+            self._dummy = value
+            for source in self.sources_templates:
+                if source.test_urls:
+                    source.urls = source.test_urls
+
+    def start(self, dummy=False):
+        '''
+        Processes the urls in the sources provided by the model.
+        Every iteration processes the data retrieved from one url for each Source.
+        '''
         while self.sources_templates:
             empty = []
             for source, templates in self.sources_templates.items():
-                for res in source:
+                if source.urls or source.received:
+                    res = source.get_source()
                     if res:
+                        print('parsing', source.name)
+                        url, attrs, data = res
                         for template in templates:
-                            template.parse(*res)
+                            template.parse(url, attrs, data, verbose=dummy)
                             template.gen_source(template.objects)
-                            self.store_template(template)
-                    elif res is None:
+                    elif res == False:
+                        print(source.name, 'returned nothing')
                         empty.append(source)
+                else:
+                    continue
             if empty:
                 for source in empty:
-                    source.in_q.put(None)
                     self.sources_templates.pop(source)
         self.kill_databases()
         print('done')
 
     def store_template(self, template):
         for db in self.db_threads.get(template.name, []):
-            db.in_q.put(template)
+            db.worker.in_q.put(template)
 
     def kill_databases(self):
         print('Waiting for the database')
-        for db in chain.from_iterable(self.db_threads.values()):
-            db.in_q.put(None)
-        for db in chain.from_iterable(self.db_threads.values()):
-            db.join()
+        for template in self.templates:
+            for db in template.database:
+                db.worker.in_q.put(None)
+                db.worker.join()
 
     def prepare_templates(self):
         '''
         Check if the functions in each template are used properly
         and return which types of databases are needed.
         '''
-        db_threads = defaultdict(list)
         parsers = set()
         sources = []
 
         for template in self.templates:
             for parser in template.parser:
                 parsers.add(parser)
-            if template.db_type:
-                for db_type in template.db_type:
-                    db_threads[db_type].append(template)
             for attr in template.attrs:
                 if attr.emits:
                     sources.append(attr.emits)
-        return db_threads, parsers, sources
+        return parsers, sources
 
     def get_template(self, template):
         if type(template) is Template:
             key = template.name
         elif type(template) is str:
             key = template
-        for phase in self.phases:
-            for template in phase.templates:
-                if template.name == key:
-                    return template
-
-    def read_template(self, template_name='', as_object=False, *args):
-        template = self.get_template(template_name)
-        return template.db_type.read(*args, template=template)
+        for template in self.templates:
+            if template.name == key:
+                return template
 
     def __repr__(self):
         repr_string = self.name + ':\n'
-        for phase in self.phases:
-            repr_string += '\t{}\n'.format(phase.name)
-            for template in phase.templates:
-                repr_string += '\t\t{}\n'.format(template.name)
+        for template in self.templates:
+            repr_string += '\t{}\n'.format(template.name)
         return repr_string
+
+    # TODO fix this method
+    def show_progress(self):
+        # os.system('clear')
+        info = '''
+        Domain              {}
+        Sources to get:     {}
+        Sources to parse:   {}
+        Sources parsed:     {} {}%
+        Average get time:   {}s
+        Average parse time: {}s
+        '''
+        get_average = sum(w.mean for w in self.workers) / len(self.workers)
+        print(info.format(self.name,
+                          self.phase,
+                          self.source_q.qsize(),
+                          self.to_parse,
+                          self.parsed, (self.parsed / self.to_parse) * 100,
+                          round(get_average, 3),
+                          round(self.total_time / self.parsed, 3)
+                          ))
