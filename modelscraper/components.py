@@ -14,7 +14,6 @@ from . import databases
 
 
 pp = pprint.PrettyPrinter(indent=4)
-forbidden_characters = 'These characters {} cannot be in the name {}'
 
 
 class BaseModel(object):
@@ -161,10 +160,8 @@ class Template(BaseModel):
                            db.forbidden_chars]
         for parser in self.parser:
             for attr in [a for a in self.attrs if not a.from_source]:
-                if any(c in attr.name for c in forbidden_chars):
-                    raise Exception(
-                        forbidden_characters.format(str(forbidden_chars),
-                                                    str(attr.name)))
+                for database in self.databases:
+                    database.forbidden_chars(attr.name)
                 for func in attr.func:
                     if not getattr(parser, func, False):
                         raise Exception(
