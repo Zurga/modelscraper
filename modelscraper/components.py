@@ -160,7 +160,7 @@ class Template(BaseModel):
                            db.forbidden_chars]
         for parser in self.parser:
             for attr in [a for a in self.attrs if not a.from_source]:
-                for database in self.databases:
+                for database in self.database:
                     database.forbidden_chars(attr.name)
                 for func in attr.func:
                     if not getattr(parser, func, False):
