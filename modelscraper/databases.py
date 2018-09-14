@@ -1,5 +1,6 @@
 import csv
 import json
+import logging
 import os
 import subprocess
 import sqlite3
@@ -13,10 +14,14 @@ from pymongo.collection import Collection
 
 from .helpers import add_other_doc
 
+
 unsupported = 'The "{}" function is not supported by the {} adapter'
 implement_error = "These methods are not implemented in the subclass {}: {}"
+forbidden_characters = 'These characters {} cannot be in the name {}'
+logger = logging.getLogger(__name__)
 
-class MetaDatabase(type):
+
+class MetaDatabaseImplementation(type):
     def __new__(meta, name, bases, class_dict):
         funcs = ['create', 'read', 'update', 'delete']
         if bases != (object, ):
@@ -26,43 +31,83 @@ class MetaDatabase(type):
                     implement_error.format(name, str(not_implemented)))
         return type.__new__(meta, name, bases, class_dict)
 
-class BaseDatabase(Process, metaclass=MetaDatabase):
+
+class BaseDatabaseImplementation(Process, metaclass=MetaDatabaseImplementation):
     create, read, update, delete = None, None, None, None
 
-    def __init__(self, cache=10):
+    def __init__(self, parent=None, table='', cache=10):
         super().__init__()
-        self.in_q = JoinableQueue()
-        self.result_q = JoinableQueue()
+        self.in_q = parent.in_q
         self.cache = cache
+        self.templates = None
+
+    @property
+    def templates(self):
+        return self._templates
+
+    @templates.setter
+    def templates(self, templates):
+        self._templates = templates
 
     def run(self):
         while True:
             template = self.in_q.get()
 
             if template is None:
+                print('received stopping sign')
                 break
 
             # Call to the functions in this class
-            func = getattr(self, template.func, None)
-            if func:
-                res = func(template, **template.kws)
-            self.result_q.put(res)
-            self.in_q.task_done()
+            try:
+                func = getattr(self, template.func, None)
+                if func:
+                    res = func(template, **template.kws)
+                self.in_q.task_done()
+            except Exception as e:
+                logging.log(logging.WARNING,
+                            'This template did not store correctly' +
+                            str(template.objects) + e)
+
+
+class BaseDatabase(object):
+    forbidden_chars = []
+
+    def __init__(self):
+        self.in_q = JoinableQueue()
+
+    def forbidden_chars(self, key):
+        if any(c in key for c in forbidden_chars):
+            raise Exception(forbidden_characters.format(str(forbidden_chars),
+                                                        str(key)))
+
 
 class MongoDB(BaseDatabase):
     '''
-    A thread thread that will communicate with a single MongoDB instance.
-    Look in the pymongo docs for possible functions to storing.
+    A database class for MongoDB.
+    The variables that can be set are:
+        host
+        port
     '''
-    name = 'mongo_db'
+    name = 'MongoDB'
+    forbidden_chars = ('.', '$')
 
-    def __init__(self, **kwargs):
+    def __init__(self, db, table='', host=None, port=None, **kwargs):
+        super().__init__()
+        self.client = MongoClient(host=host, port=port, connect=False)
+        db = getattr(self.client, db)
+        self.worker = MongoDBWorker(parent=self, database=db, **kwargs)
+        self.worker.daemon = True
+        self.worker.start()
+
+
+class MongoDBWorker(BaseDatabaseImplementation):
+    def __init__(self, database, **kwargs):
         super().__init__(**kwargs)
+        self.db = database
         # TODO add connection details
-        self.client = MongoClient(connect=False)
 
     def get_collection(self, template):
-        return getattr(getattr(self.client, template.db), template.table)
+        return getattr(self.db, template.table)
 
     #!@add_other_doc(Collection.insert_many)
     def create(self, template, *args, **kwargs):
@@ -103,7 +148,10 @@ class MongoDB(BaseDatabase):
 
 
 # TODO fix this to the new spec
-class ShellCommand(BaseDatabase):
+class ShellCommand(BaseDatabaseImplementation):
+    def __init__(self):
+        super.__init__()
+
     def _handle(self, item):
         for objct in item.objects:
             arguments = item.kws['command'].format(**objct).split()
@@ -121,22 +169,30 @@ class ShellCommand(BaseDatabase):
     def delete(self, template):
         pass
 
+
 class CSV(BaseDatabase):
-    def __init__(self, *args, **kwargs):
+    name = 'CSV database'
+
+    def __init__(self, db):
+        super().__init__()
+        db = os.path.abspath(template.db)
+        self.worker = CSVWorker(db, parent=self)
+        self.worker.start()
+
+
+class CSVWorker(BaseDatabaseImplementation):
+    def __init__(self, db, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.index = {}
         self.columns = {}
+        self.db = db
 
     def filename(self, template):
-        if '_attr:' in template.table:
-            table = template.objects[0][template.table.replace('_attr:', '')]
-        else:
-            table = template.table
-        return os.path.abspath('{}/{}.csv'.format(template.db, table))
+        return self.db + template.table + '.csv'
 
     def check_existing(self, template):
         filename = self.filename(template)
-        if os.path.isfile(os.path.abspath(filename)):
+        if os.path.isfile(filename):
             self.index[filename] = self.create_index(filename)
 
     def create_index(self, filename):
@@ -194,6 +250,19 @@ def dictionary_converter(s):
 
 
 class Sqlite(BaseDatabase):
+    name = 'SQlite'
+
+    def __init__(self, db, *args, **kwargs):
+        super().__init__()
+        connection = sqlite3.connect(db + '.db',
+                                     sqlite3.PARSE_DECLTYPES)
+        sqlite3.register_adapter(dict, dictionary_adapter)
+        sqlite3.register_converter('dict', dictionary_converter)
+        self.worker = SqliteWorker(connection, parent=self)
+        self.worker.start()
+
+
+class SqliteWorker(BaseDatabaseImplementation):
     ''' A database implementation for Sqlite3.'''
 
     template_table = '''CREATE TABLE IF NOT EXISTS {table}
@@ -210,10 +279,11 @@ class Sqlite(BaseDatabase):
         WHERE OLD.id = {table}_{attr}.id; END;
         '''
 
-    def __init__(self, new=False, **kwargs):
+    def __init__(self, db, new=False, **kwargs):
         super().__init__(**kwargs)
         self.template_schema = {}
         self.connections = {}
+        self.db = db
 
     def create_schema(self, template):
         attrs = template.attrs
@@ -238,30 +308,19 @@ class Sqlite(BaseDatabase):
             yield self.attr_trigger.format(table=table, attr=attr.name,
                                            type=value_type)
 
-    def connect(self, template):
-        connection = self.connections.get(template.db, False)
-        if not connection:
-            connection = sqlite3.connect(template.db + '.db',
-                                         sqlite3.PARSE_DECLTYPES)
-            sqlite3.register_adapter(dict, dictionary_adapter)
-            sqlite3.register_converter('dict', dictionary_converter)
-            self.connections[template.db] = connection
-
+    def check_schema(self, template):
         # Is there a schema of the template we are storing
         if not self.template_schema.get(template.name):
             schema = self.create_schema(template)
-            with connection:
+            with self.db as connection:
                 for line in schema:
                     connection.execute(line)
             self.template_schema[template.name] = schema
 
-        return connection
-
     def create(self, template, *args, **kwargs):
-        to_insert = len(template.objects)
-
+        self.check_schema(template)
         query = "INSERT INTO {table} VALUES (?, ?);"
-        with self.connect(template) as con:
+        with self.db as con:
             # By inserting NULL into the id column SQLITE will create the id.
             values = list(zip([None] * len(template.urls), template.urls))
             con.executemany(query.format(table=template.table), values)
@@ -281,12 +340,13 @@ class Sqlite(BaseDatabase):
         id_query = """ SELECT url, id FROM {table} WHERE url =
         ?""".format(table=template.table)
         urls_ids = []
-        with self.connect(template) as con:
+        with self.db as con:
             for url in template.urls:
                 urls_ids.extend(con.execute(id_query, (url,)).fetchall())
         return urls_ids
 
     def update(self, template, *args, **kwargs):
+        self.check_schema(template)
         query = "UPDATE {} SET {} = ? WHERE id = ?"
         for (url, i) in self.urls_ids(template):
             obj_idx = template.urls.index(url)
@@ -298,6 +358,7 @@ class Sqlite(BaseDatabase):
                     con.execute(query.format(table_name, attr), (value, i))
 
     def delete(self, template, *args, **kwargs):
+        self.check_schema(template)
         urls_ids = dict(self.urls_ids(template))
         delete_query = 'DELETE FROM {table} WHERE id = ?'
         with self.connect(template) as con:
@@ -306,5 +367,6 @@ class Sqlite(BaseDatabase):
                 con.execute(delete_query.format(table=template.table),
                             (db_id,))
 
+    #TODO fix this method
     def read(self, template, *args, **kwargs):
         pass
