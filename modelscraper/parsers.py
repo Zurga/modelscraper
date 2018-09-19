@@ -134,7 +134,6 @@ class BaseParser:
                     logging.log(logging.WARNING,
                                 'Template' + template.name + 'failed')
                     continue
-
             yield objct
 
     def _gen_attrs(self, attrs, objct, data):
@@ -142,7 +141,6 @@ class BaseParser:
             if not attr.func:
                 parsed = attr.value
             elif attr.transfers:
-                print(attr)
                 continue
             else:
                 elements = self._apply_selector(attr.selector, data)
