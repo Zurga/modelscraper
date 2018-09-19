@@ -14,7 +14,6 @@ table_trans = str.maketrans('[]', '<>')
 search = WebSource(name='search',
                    url_template='https://www.ah.nl/{}',
                    urls=(base_search.format(l) for l in ascii_lowercase))
-#more_results = WebSource(url_template='https://www.ah.nl/{}')
 
 product_test = 'producten/product/wi238928/ah-biologisch-schouderkarbonade'
 product_source = WebSource(name='product_source', url_template=delegate_url,
@@ -23,10 +22,7 @@ test_product = FileSource(urls=['data/ah_nl/products.json'])
 db = MongoDB(db='ah_nl')
 
 search_template = Template(
-    source=search,
-    name='search_result',
-    database=db,
-    table='product_urls',
+    source=search, name='search_result',
     selector='//type[text() = "SearchLane"]/../_embedded/items',
     parser=JSONParser,
     attrs=[
@@ -81,6 +77,6 @@ product = Template(
 )
 
 ah = ScrapeModel(
-    name='ah', domain='https://www.ah.nl/',
+    name='ah', domain='https://www.ah.nl/', logfile='ah_nl',
     templates=[search_template, load_more_template, product]
 )
