@@ -14,6 +14,7 @@ from . import databases
 
 
 pp = pprint.PrettyPrinter(indent=4)
+logger =  logging.getLogger(__name__)
 
 
 class BaseModel(object):
@@ -38,7 +39,8 @@ class Attr(BaseModel):
     '''
 
     def __init__(self, func=None, value=None, attr_condition={}, source_condition={},
-                 type=None, arity=1, from_source=False, transfers=False, *args, **kwargs):
+                 type=None, arity=1, from_source=False,
+                 transfers=False, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.func = str_as_tuple(func)
         self.value = value
@@ -142,9 +144,6 @@ class Template(BaseModel):
         self.table = table
         self.url = url
 
-        self.urls = []
-        self.objects = []
-
         if self.url:
             self.attrs['url'] = Attr(name='url', value=self.url)
 
@@ -173,8 +172,9 @@ class Template(BaseModel):
 
     def __getstate__(self):
         pickled = ['attrs', 'table', 'func', 'kws',
-                   'name', 'url', 'objects', 'urls']
-        return {p: self.__dict__[p] for p in pickled}
+                   'name', 'url', ]
+        dic = {p: self.__dict__[p] for p in pickled}
+        return dic
 
     def __setstate__(self, state):
         self.__dict__.update(state)
@@ -231,6 +231,7 @@ class Template(BaseModel):
             self.attrs.pop(attr)
 
     def parse(self, url, attrs, data, verbose=False):
+        objects, urls = [], []
         if self.preparser:
             data = self.preparser(data)
         if len(self.parser) > 1:
@@ -254,23 +255,16 @@ class Template(BaseModel):
             count += i
             obj = {**obj, **attrs}
             obj['url'] = obj.get('url', [obj.get('_url')])
-            self.urls.extend(obj['url'])
+            urls.extend(obj['url'])
             if self.dated:
                 obj['_date'] = str(datetime.now())
 
-            self.objects.append(obj)
+            objects.append(obj)
+        return objects, urls
 
-        if not count and self.required:
-            print(selector, 'yielded nothing, quitting.')
-            return False
-        else:
-            if verbose:
-                print(self.name)
-                pp.pprint(self.objects)
-            if self.objects:
-                for db in self.database:
-                    db.worker.in_q.put(self)
-        return True
+    def store_objects(self, objects, urls):
+        for db in self.database:
+            db.store(self, objects, urls)
 
     # TODO fix to new database spec
     def query(self, query={}):
@@ -350,7 +344,7 @@ class ScrapeModel():
                 if source.test_urls:
                     source.urls = source.test_urls
 
-    def start(self, dummy=False):
+    def start(self):
         '''
         Processes the urls in the sources provided by the model.
         Every iteration processes the data retrieved from one url for each Source.
@@ -361,13 +355,13 @@ class ScrapeModel():
                 if source.urls or source.received:
                     res = source.get_source()
                     if res:
-                        print('parsing', source.name)
                         url, attrs, data = res
                         for template in templates:
-                            template.parse(url, attrs, data, verbose=dummy)
-                            template.gen_source(template.objects)
+                            objects, urls = template.parse(url, attrs, data)
+                            template.store_objects(objects, urls)
+                            template.gen_source(objects)
                     elif res == False:
-                        print(source.name, 'returned nothing')
+                        logging.log(logging.INFO, 'stopping' + source.name)
                         empty.append(source)
                 else:
                     continue
