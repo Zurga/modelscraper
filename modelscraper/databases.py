@@ -2,6 +2,7 @@ import csv
 import json
 import logging
 import os
+import pprint
 import subprocess
 import sqlite3
 import time
@@ -13,6 +14,8 @@ from pymongo import MongoClient, UpdateMany
 from pymongo.collection import Collection
 
 from .helpers import add_other_doc
+
+pp = pprint.PrettyPrinter(indent=4)
 
 
 unsupported = 'The "{}" function is not supported by the {} adapter'
@@ -51,7 +54,7 @@ class BaseDatabaseImplementation(Process, metaclass=MetaDatabaseImplementation):
 
     def run(self):
         while True:
-            template = self.in_q.get()
+            template, objects, urls = self.in_q.get()
 
             if template is None:
                 print('received stopping sign')
@@ -61,12 +64,15 @@ class BaseDatabaseImplementation(Process, metaclass=MetaDatabaseImplementation):
             try:
                 func = getattr(self, template.func, None)
                 if func:
-                    res = func(template, **template.kws)
+                    res = func(template, objects, urls, **template.kws)
                 self.in_q.task_done()
             except Exception as e:
+                print(id(objects))
                 logging.log(logging.WARNING,
                             'This template did not store correctly' +
-                            str(template.objects) + e)
+                            str(template.name) + str(urls) + str(template.url) +
+                            str(objects) + str(e))
+
 
 
 class BaseDatabase(object):
@@ -79,6 +85,10 @@ class BaseDatabase(object):
         if any(c in key for c in self.forbidden_chars):
             raise Exception(forbidden_characters.format(str(forbidden_chars),
                                                         str(key)))
+
+    def store(self, template, objects, urls):
+        #pp.pprint(objects)
+        self.worker.in_q.put((template, objects, urls))
 
 
 class MongoDB(BaseDatabase):
@@ -110,14 +120,14 @@ class MongoDBWorker(BaseDatabaseImplementation):
         return getattr(self.db, template.table)
 
     #!@add_other_doc(Collection.insert_many)
-    def create(self, template, *args, **kwargs):
+    def create(self, template, objects, urls, *args, **kwargs):
         coll = self.get_collection(template)
-        return coll.insert_many(template.objects, *args, **kwargs)
+        return coll.insert_many(objects, *args, **kwargs)
 
     #!@add_other_doc(Collection.bulk_write)
-    def update(self, template, key='', method='$set', upsert=True, date=False):
+    def update(self, template, objects, urls, key='', method='$set', upsert=True, date=False):
         coll = self.get_collection(template)
-        queries = self._create_queries(key, template.objects)
+        queries = self._create_queries(key, objects)
         if date:
             date = datetime.datetime.fromtimestamp(time.time())
             objects = ({date.isoformat(): obj}
@@ -203,35 +213,35 @@ class CSVWorker(BaseDatabaseImplementation):
                 index[row['_url']] = i
         return index
 
-    def create(self, template, **kwargs):
+    def create(self, template, objects, urls, **kwargs):
         filename = self.filename(template)
         if not self.index.get('filename', False):
             self.index[filename] = self.create_index(filename)
         try:
             with open(filename, 'a') as fle:
                 writer = csv.DictWriter(fle,
-                                        fieldnames=template.objects[0].keys())
+                                        fieldnames=objects[0].keys())
                 writer.writeheader()
-                writer.writerows(template.objects)
-                index = dict(enumerate((o['_url'] for o in template.objects)))
+                writer.writerows(objects)
+                index = dict(enumerate((o['_url'] for o in objects)))
                 self.index[filename] = {**self.index[filename], **index}
         except Exception as E:
             print('CSVDatabse', E)
             return False
         return True
 
-    def read(self, template):
+    def read(self, template, urls):
         pass
 
-    def update(self, template):
+    def update(self, template, objects, urls):
         filename = self.filename(template)
         if not self.index.get('filename', False):
             self.index[filename] = self.create_index(filename)
         try:
             with open(filename, 'a') as fle:
                 writer = csv.DictWriter(fle,
-                                        fieldnames=template.objects[0].keys())
-                writer.writerows(template.objects)
+                                        fieldnames=objects[0].keys())
+                writer.writerows(objects)
         except Exception as E:
             print('CSVDatabse', E)
             return False
@@ -317,56 +327,56 @@ class SqliteWorker(BaseDatabaseImplementation):
                     connection.execute(line)
             self.template_schema[template.name] = schema
 
-    def create(self, template, *args, **kwargs):
+    def create(self, template, objects, urls, *args, **kwargs):
         self.check_schema(template)
         query = "INSERT INTO {table} VALUES (?, ?);"
         with self.db as con:
             # By inserting NULL into the id column SQLITE will create the id.
-            values = list(zip([None] * len(template.urls), template.urls))
+            values = list(zip([None] * len(urls), urls))
             con.executemany(query.format(table=template.table), values)
 
             # We select all the ids that were inserted to create the attrs
-            urls_ids = dict(self.urls_ids(template))
+            urls_ids = dict(self.urls_ids(template.table, urls))
 
             for attr in template.attrs.keys():
                 table_name = '_'.join((template.table, attr))
 
-                for obj, url in zip(template.objects, template.urls):
+                for obj, url in zip(objects, urls):
                     db_id = urls_ids[url]
                     for value in obj[attr]:
                         con.execute(query.format(table=table_name), (db_id, value))
 
-    def urls_ids(self, template):
+    def urls_ids(self, table, urls):
         id_query = """ SELECT url, id FROM {table} WHERE url =
-        ?""".format(table=template.table)
+        ?""".format(table=table)
         urls_ids = []
         with self.db as con:
-            for url in template.urls:
+            for url in urls:
                 urls_ids.extend(con.execute(id_query, (url,)).fetchall())
         return urls_ids
 
-    def update(self, template, *args, **kwargs):
+    def update(self, template, objects, urls, *args, **kwargs):
         self.check_schema(template)
         query = "UPDATE {} SET {} = ? WHERE id = ?"
-        for (url, i) in self.urls_ids(template):
-            obj_idx = template.urls.index(url)
-            obj = template.objects[obj_idx]
+        for (url, i) in self.urls_ids(template.table, urls):
+            obj_idx = urls.index(url)
+            obj = objects[obj_idx]
 
             for attr in obj.keys():
                 table_name = '_'.join((template.name, attr))
                 for value in obj[attr]:
                     con.execute(query.format(table_name, attr), (value, i))
 
-    def delete(self, template, *args, **kwargs):
+    def delete(self, template, objects, urls, *args, **kwargs):
         self.check_schema(template)
-        urls_ids = dict(self.urls_ids(template))
+        urls_ids = dict(self.urls_ids(template.table, urls))
         delete_query = 'DELETE FROM {table} WHERE id = ?'
         with self.connect(template) as con:
-            for url in template.urls:
+            for url in urls:
                 db_id = urls_ids[url]
                 con.execute(delete_query.format(table=template.table),
                             (db_id,))
 
     #TODO fix this method
-    def read(self, template, *args, **kwargs):
+    def read(self, template, urls, *args, **kwargs):
         pass
