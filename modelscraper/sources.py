@@ -1,6 +1,7 @@
 from multiprocessing import JoinableQueue
 from queue import Empty
 from threading import BoundedSemaphore
+from copy import copy
 import logging
 import types
 
@@ -15,11 +16,12 @@ from .source_workers import WebSourceWorker, FileSourceWorker, \
 
 class Source(object):
     def __init__(self, name='', kws={}, attrs=[], url_template='{}',
-                 urls=[], test_urls=[], n_workers=1, compression='',
+                 urls=[], func='', test_urls=[], n_workers=1, compression='',
                  kwargs_format={}, duplicate=False, repeat=False):
         self.attrs = attrs
         self.compression = compression
         self.duplicate = duplicate
+        self.func = func
         self.kwargs_format = kwargs_format
         self.kws = kws
         self.n_workers = n_workers
@@ -36,6 +38,7 @@ class Source(object):
         self._semaphore = BoundedSemaphore(self.n_workers)
         self.url_amount = int((self.n_workers / 2) + 10)
         self.to_parse = 0
+        self._backup_sources = None
         if not self.urls:
             self.received = False
         else:
@@ -160,6 +163,17 @@ class Source(object):
                 kwargs[key] = value
         return kwargs
 
+    def use_test_urls(self):
+        if type(self.urls) != types.GeneratorType:
+            self._backup_sources = copy(self.urls)
+        else:
+            self._backup_sources = self.urls
+        self.urls = self.test_urls if hasattr(self, 'test_urls') else []
+
+    def restore_urls(self):
+        self.urls = self._backup_sources
+
+
 class WebSource(Source):
     kwargs = ('headers', 'data', 'form', 'params')
     source_worker = WebSourceWorker
@@ -168,13 +182,11 @@ class WebSource(Source):
                  func='get', headers={}, json_key='', params=[],
                  retries=10, session=requests.Session(),
                  time_out=1, user_agent='', *args, **kwargs):
-        print(args, kwargs)
         super().__init__(*args, **kwargs)
         self.cookies = cookies
         self.data = data
         self.domain = domain
         self.form = form
-        self.func = func
         self.headers = headers
         self.json_key = json_key
         self.params = params
@@ -182,6 +194,7 @@ class WebSource(Source):
         self.session = session
         self.time_out = time_out
         self.user_agent = user_agent
+        self.func=func
 
         if self.cookies:
             print('cookies', self.cookies)
