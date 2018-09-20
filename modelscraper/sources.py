@@ -106,8 +106,8 @@ class Source(object):
         return None
 
     def consume(self):
-        for _ in range(self.url_amount):
-            if self.urls:
+        if self.urls:
+            for _ in range(self.url_amount):
                 if type(self.urls) is list:
                     try:
                         url = self.urls.pop()
@@ -171,7 +171,8 @@ class Source(object):
         self.urls = self.test_urls if hasattr(self, 'test_urls') else []
 
     def restore_urls(self):
-        self.urls = self._backup_sources
+        if self._backup_sources:
+            self.urls = self._backup_sources
 
 
 class WebSource(Source):
@@ -214,7 +215,10 @@ class WebSource(Source):
         return kwargs
 
     def add_source(self, url, attrs, objct):
-        if self.domain in url:
+        if self.domain:
+            if self.domain in url:
+                super().add_source(url, attrs, objct)
+        else:
             super().add_source(url, attrs, objct)
 
 class FileSource(Source):
