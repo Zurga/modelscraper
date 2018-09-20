@@ -41,7 +41,7 @@ class BaseSourceWorker(Thread):
             url, attrs, kwargs = item
             with self.semaphore:
                 self.retrieving = True
-                data, increment = self.retrieve(url, kwargs)
+                data = self.retrieve(url, kwargs)
             self._recalculate_mean(start)
 
             if self.parent.compression == 'zip':
@@ -71,35 +71,35 @@ class WebSourceWorker(BaseSourceWorker):
         try:
             response = func(url, **kwargs)
             if response:
-                return response.text, 1
+                return response.text
             else:
-                return False, -1
+                return False
 
         # Retry later with a timeout,
         except requests.Timeout:
             self.in_q.put(url)
-            return False, 0
+            return False
 
         # Retry later with connection error.
         except requests.ConnectionError:
             self.in_q.put(url)
             time.sleep(self.time_out)
-            return False, 0
+            return False
 
         except Exception as E:
             print(self.__class__.__name__, id(self), E)
             print(traceback.print_tb(sys.exc_info()[-1]))
-            return False, -1
+            return False
 
 
 class FileSourceWorker(BaseSourceWorker):
     def retrieve(self, url, kwargs):
         try:
             with open(url, **kwargs) as fle:
-                return fle.read(), 1
+                return fle.read()
         except FileNotFoundError:
             print('file not found', url)
-            return False, -1
+            return False
 
 
 class ProgramSourceWorker(BaseSourceWorker):
@@ -108,12 +108,13 @@ class ProgramSourceWorker(BaseSourceWorker):
         result = subprocess.run(function, shell=True,
                                 stdout=subprocess.PIPE)
         try:
-            stdout = result.stdout
-            return stdout.decode('utf-8'), 1
+            #stdout = result.stdout
+            data = result.stdout.decode('utf-8')
+            return data
         except Exception as E:
             logging.log(logging.WARNING, 'Could not decode the result from ' +
                         function + ':\n ' + stdout)
-            return False, -1
+            return False
 
 
 class ModuleSourceWorker(BaseSourceWorker):
@@ -146,10 +147,10 @@ class ModuleSourceWorker(BaseSourceWorker):
             data = function(url, **self.parent.kws)
             if self.conversion:
                 data = self.conversion(data)
-            return data, 1
+            return data
         except Exception as E:
             logging.warning(' : '.join([str(E), url, str(self.parent.kws)]))
-            return False, -1
+            return False
 
 
 class APISourceWorker(BaseSourceWorker):
