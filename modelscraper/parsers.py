@@ -67,7 +67,14 @@ class BaseParser:
         If the source has a template, the data in the source is parsed
         according to that template.
         '''
-        data = self._convert_data(url, data)
+        try:
+            data = self._convert_data(url, data)
+        except Exception as E:
+            logging.log(logging.WARNING,
+                        "url: {} could not be converted by {}".format(url,
+                                                                      self.__name__) + \
+                        " Exception: {}".format(str(E)))
+            raise StopIteration
         extracted = self._extract(data, selector)
         if not extracted:
             logging.log(logging.WARNING,
@@ -231,20 +238,15 @@ class HTMLParser(BaseParser):
         try:  # Create an HTML object from the returned text.
             data = lxhtml.fromstring(data)
         except ValueError:  # This happens when xml is declared in html.
-            data = lxhtml.fromstring('\n'.join(data.split('\n')[1:]))
-        except TypeError:
-            logging.log(logging.WARNING,
-                        'Something weird has been returned by the server.')
-            logging.log(logging.WARNING, data)
-            return False
-        except etree.XMLSyntaxError:
-            logging.log(logging.WARNING,
-                        'XML syntax parsing error:',)
-            return False
-        else:
-            urlparsed = urlparse.urlparse(url)
-            data.make_links_absolute(urlparsed.scheme + '://' + urlparsed.netloc)
-            return data
+            try:
+                data = lxhtml.fromstring('\n'.join(data.split('\n')[1:]))
+            except Exception:
+                raise
+        except Exception as E:
+            raise
+        urlparsed = urlparse.urlparse(url)
+        data.make_links_absolute(urlparsed.scheme + '://' + urlparsed.netloc)
+        return data
 
     def _get_selector(self, selector):
         if selector:
@@ -260,7 +262,6 @@ class HTMLParser(BaseParser):
                     except etree.XPathSyntaxError:
                         raise Exception('Not a valid css or xpath selector',
                                         selector)
-
         return None
 
     def custom_func(self, element, function):
@@ -355,10 +356,12 @@ class HTMLParser(BaseParser):
             sel_table(html=lxml.etree, selector=CSSSelector('table td'),
                     columns=2, offset=0)
         '''
-        elements = element.cssselect('td')
-        keys = [el.text for el in elements[offset::columns]]
-        values = [el.text for el in elements[1::columns]]
-        return dict(zip(keys, values))
+        table_headers = [header.text_content() for header in element.cssselect('th')]
+        columns = len(table_headers)
+        elements = [cell.text_content() for cell in element.cssselect('td')]
+        # Taken from: https://stackoverflow.com/questions/2233204/how-does-zipitersn-work-in-python
+        rows = list(zip(*[iter(elements)]*columns))
+        return rows
 
     def sel_row(self, elements, row_selector: int=None, value: str='',
                 attr=None, index=None):
@@ -386,8 +389,8 @@ class HTMLParser(BaseParser):
         return self._sel_text(attr, **kwargs)
 
     @add_other_doc(BaseParser.modify_text)
-    def sel_url(self, element, index: int=None, **kwargs):
-        return self.sel_attr(element, attr='href', index=index, **kwargs)
+    def sel_url(self, element, **kwargs):
+        return self.sel_attr(element, attr='href', **kwargs)
 
     def sel_date(self, element, fmt: str='YYYYmmdd', attr: str=None, index:
                  int=None):
@@ -423,7 +426,7 @@ class HTMLParser(BaseParser):
             return array_string[0].split(',')
 
     def fill_form(self, elements, fields={}, attrs=[]):
-        from .components import Source
+        from .sources import WebSource
         for form in elements:
             data = {**dict(form.form_values()), **fields}
             source = Source(url=form.action, method=form.method, duplicate=True,
@@ -460,13 +463,11 @@ class TextParser(BaseParser):
 
     def _extract(self, data, selector):
         if selector:
-            print(selector)
             return ((d for d in self._apply_selector(sel, data)) for sel in selector)
         return str_as_tuple(data)
 
     def _apply_selector(self, selector, data):
         if selector:
-            print(selector)
             return data.split(selector)
         return data
 
