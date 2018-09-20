@@ -341,8 +341,11 @@ class ScrapeModel():
         if value:
             self._dummy = value
             for source in self.sources_templates:
-                if source.test_urls:
-                    source.urls = source.test_urls
+                source.use_test_urls()
+                # Backup the urls of the source in a different attribute
+        else:
+            for source in self.sources_templates:
+                source.restore_urls()
 
     def start(self):
         '''
@@ -352,17 +355,18 @@ class ScrapeModel():
         while self.sources_templates:
             empty = []
             for source, templates in self.sources_templates.items():
-                if source.urls or source.received:
-                    res = source.get_source()
-                    if res:
-                        url, attrs, data = res
-                        for template in templates:
-                            objects, urls = template.parse(url, attrs, data)
-                            template.store_objects(objects, urls)
-                            template.gen_source(objects)
-                    elif res == False:
-                        logging.log(logging.INFO, 'stopping' + source.name)
-                        empty.append(source)
+                res = source.get_source()
+                if res:
+                    url, attrs, data = res
+                    for template in templates:
+                        objects, urls = template.parse(url, attrs, data)
+                        if self.dummy:
+                            pp.pprint((url, objects))
+                        template.store_objects(objects, urls)
+                        template.gen_source(objects)
+                elif res == False:
+                    logging.log(logging.INFO, 'stopping' + source.name)
+                    empty.append(source)
                 else:
                     continue
             if empty:
@@ -371,16 +375,11 @@ class ScrapeModel():
         self.kill_databases()
         print('done')
 
-    def store_template(self, template):
-        for db in self.db_threads.get(template.name, []):
-            db.worker.in_q.put(template)
-
     def kill_databases(self):
         print('Waiting for the database')
         for template in self.templates:
             for db in template.database:
-                db.worker.in_q.put(None)
-                db.worker.join()
+                db.stop()
 
     def prepare_templates(self):
         '''

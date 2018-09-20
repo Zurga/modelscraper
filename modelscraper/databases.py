@@ -54,11 +54,12 @@ class BaseDatabaseImplementation(Process, metaclass=MetaDatabaseImplementation):
 
     def run(self):
         while True:
-            template, objects, urls = self.in_q.get()
+            item = self.in_q.get()
 
-            if template is None:
+            if item is None:
                 print('received stopping sign')
                 break
+            template, objects, urls = item
 
             # Call to the functions in this class
             try:
@@ -69,10 +70,9 @@ class BaseDatabaseImplementation(Process, metaclass=MetaDatabaseImplementation):
             except Exception as e:
                 print(id(objects))
                 logging.log(logging.WARNING,
-                            'This template did not store correctly' +
-                            str(template.name) + str(urls) + str(template.url) +
+                            'This template did not store correctly ' +
+                            str(template.name) + str(template.url) +
                             str(objects) + str(e))
-
 
 
 class BaseDatabase(object):
@@ -90,6 +90,11 @@ class BaseDatabase(object):
         #pp.pprint(objects)
         self.worker.in_q.put((template, objects, urls))
 
+    def stop(self):
+        if self.worker.is_alive():
+            self.worker.in_q.put(None)
+            self.worker.join()
+
 
 class MongoDB(BaseDatabase):
     '''
@@ -106,7 +111,6 @@ class MongoDB(BaseDatabase):
         self.client = MongoClient(host=host, port=port, connect=False)
         db = getattr(self.client, db)
         self.worker = MongoDBWorker(parent=self, database=db, **kwargs)
-        self.worker.daemon = True
         self.worker.start()
 
 
