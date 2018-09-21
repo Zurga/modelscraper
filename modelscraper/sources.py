@@ -15,6 +15,7 @@ from .source_workers import WebSourceWorker, FileSourceWorker, \
 
 
 class Source(object):
+    kwargs = []
     def __init__(self, name='', kws={}, attrs=[], url_template='{}',
                  urls=[], func='', test_urls=[], n_workers=1, compression='',
                  kwargs_format={}, duplicate=False, repeat=False):
@@ -32,7 +33,6 @@ class Source(object):
 
         self.in_q = JoinableQueue()
         self.out_q = JoinableQueue()
-        self.kwargs = []
         self.seen = ScalableBloomFilter()
         self.test_urls = str_as_tuple(test_urls)
         self._semaphore = BoundedSemaphore(self.n_workers)
@@ -135,7 +135,7 @@ class Source(object):
     def add_source(self, url, attrs, objct={}):
         self.received = True
         url = self.url_template.format(url)
-        if url not in self.seen or self.repeat:
+        if (url not in self.seen or self.repeat) or self.duplicate:
             kwargs = self.get_kwargs(objct)
             self.in_q.put((url, attrs, kwargs))
             self.to_parse += 1
@@ -144,22 +144,24 @@ class Source(object):
     def get_kwargs(self, objct=None):
         kwargs = {}
         for key in self.kwargs:
-            value = getattr(key, self)
+            value = getattr(self, key)
             if value:
+                # If the kwargs are in a list or generator, we get the next
+                # value.
                 if type(value) is list:
                     value = value.pop(0)
-                elif type(value) is dict:
-                    kwargs[key] = value
-                    continue
-                else:
+                elif type(value) is types.GeneratorType:
                     try:
                         value = next(value)
                     except StopIteration:
                         continue
 
-                if objct and key in self.kwargs_format:
+                # Format the value for the keyword argument based on an object
+                # that was passed.
+                if objct and key in self.kwargs_format and type(value) is str:
                     value = value.format(**{k:objct[k] for k in
                                             self.kwargs_format[key]})
+
                 kwargs[key] = value
         return kwargs
 
@@ -195,7 +197,7 @@ class WebSource(Source):
         self.session = session
         self.time_out = time_out
         self.user_agent = user_agent
-        self.func=func
+        self.func = func
 
         if self.cookies:
             print('cookies', self.cookies)
@@ -207,11 +209,11 @@ class WebSource(Source):
             user_agent = generate_user_agent()
         else:
             user_agent = self.user_agent
+        other_kwargs = super().get_kwargs(objct)
         kwargs = {
             'headers': {
                 'User-Agent': user_agent
-            },
-            **super().get_kwargs(objct)}
+            }, **other_kwargs}
         return kwargs
 
     def add_source(self, url, attrs, objct):
@@ -225,6 +227,7 @@ class FileSource(Source):
     source_worker = FileSourceWorker
     kwargs = ['buffering']
     func = open
+    buffering = False
 
 class ProgramSource(Source):
     source_worker = ProgramSourceWorker
