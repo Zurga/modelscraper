@@ -38,8 +38,8 @@ class Attr(BaseModel):
     after which the "func" is called on the selected data.
     '''
 
-    def __init__(self, func=None, value=None, attr_condition={}, source_condition={},
-                 type=None, arity=1, from_source=False,
+    def __init__(self, func=None, value=None, attr_condition={},
+                 source_condition={}, type=None, arity=1, from_source=False,
                  transfers=False, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.func = str_as_tuple(func)
@@ -155,14 +155,12 @@ class Template(BaseModel):
 
     def validate(self):
         # Validate the functions of the attrs
-        forbidden_chars = [char for db in self.database for char in
-                           db.forbidden_chars]
         for parser in self.parser:
-            for attr in [a for a in self.attrs if not a.from_source]:
+            for attr in (a for a in self.attrs if not a.from_source):
                 for database in self.database:
                     database.check_forbidden_chars(attr.name)
                 for func in attr.func:
-                    if not getattr(parser, func, False):
+                    if type(func) is str and not getattr(parser, func, False):
                         raise Exception(
                             '{} does not exist in {}'.format(
                                 func, parser.__name__))
