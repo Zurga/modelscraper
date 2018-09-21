@@ -46,7 +46,10 @@ class BaseSourceWorker(Thread):
 
             if self.parent.compression == 'zip':
                 data = self._read_zip_file(source.data)
-            self.out_q.put((url, attrs, data))
+            if data:
+                self.out_q.put((url, attrs, data))
+            else:
+                logging.log(logging.WARNING, str(url) + 'produced no result' + str(kwargs))
 
             self.in_q.task_done()
             self.retrieving = False
@@ -83,7 +86,7 @@ class WebSourceWorker(BaseSourceWorker):
         # Retry later with connection error.
         except requests.ConnectionError:
             self.in_q.put(url)
-            time.sleep(self.time_out)
+            time.sleep(self.parent.time_out)
             return False
 
         except Exception as E:
