@@ -38,7 +38,7 @@ class BaseSourceWorker(Thread):
             if item is None:
                 print('stopping source worker', self)
                 break
-            url, attrs, kwargs = item
+            url, kwargs = item
             with self.semaphore:
                 self.retrieving = True
                 data = self.retrieve(url, kwargs)
@@ -46,7 +46,7 @@ class BaseSourceWorker(Thread):
 
             if data and self.parent.compression == 'zip':
                 data = self._read_zip_file(source.data)
-            self.out_q.put((url, attrs, data))
+            self.out_q.put((url, data))
 
             self.in_q.task_done()
             self.retrieving = False
