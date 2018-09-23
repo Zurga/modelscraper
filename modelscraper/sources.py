@@ -1,3 +1,4 @@
+from collections import defaultdict
 from multiprocessing import JoinableQueue
 from queue import Empty
 from threading import BoundedSemaphore
@@ -39,6 +40,7 @@ class Source(object):
         self.url_amount = int((self.n_workers / 2) + 10)
         self.to_parse = 0
         self._backup_sources = None
+        self.url_attrs = defaultdict(dict)
         if not self.urls:
             self.received = False
         else:
@@ -90,7 +92,8 @@ class Source(object):
         self.consume()
 
         try:
-            url, attrs, data = self.out_q.get(timeout=1)
+            url, data = self.out_q.get(timeout=1)
+            attrs = self.url_attrs[url]
             self.out_q.task_done()
             self.to_parse -= 1
             if not data:
@@ -128,10 +131,12 @@ class Source(object):
                     attrs = self.attrs.pop()
                 else:
                     attrs = {}
+
+                self.url_attrs[url] = attrs
                 kwargs = self.get_kwargs()
 
                 url = self.url_template.format(url)
-                self.in_q.put((url, attrs, kwargs))
+                self.in_q.put((url, kwargs))
                 self.to_parse += 1
                 self.add_to_seen(url)
 
@@ -143,7 +148,8 @@ class Source(object):
         url = self.url_template.format(url)
         if (url not in self.seen or self.repeat) or self.duplicate:
             kwargs = self.get_kwargs(objct)
-            self.in_q.put((url, attrs, kwargs))
+            self.url_attrs[url] = attrs
+            self.in_q.put((url, kwargs))
             self.to_parse += 1
             self.add_to_seen(url)
 
@@ -206,7 +212,6 @@ class WebSource(Source):
         self.func = func
 
         if self.cookies:
-            print('cookies', self.cookies)
             requests.utils.add_dict_to_cookiejar(self.session.cookies,
                                                  self.cookies)
 
