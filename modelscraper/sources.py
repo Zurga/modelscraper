@@ -93,6 +93,9 @@ class Source(object):
             url, attrs, data = self.out_q.get(timeout=1)
             self.out_q.task_done()
             self.to_parse -= 1
+            if not data:
+                logging.log(logging.WARNING, str(url) + 'produced no result')
+                return None
             return url, attrs, data
         except Empty:
             if self.received and not self.to_parse and not all(
@@ -130,7 +133,10 @@ class Source(object):
                 url = self.url_template.format(url)
                 self.in_q.put((url, attrs, kwargs))
                 self.to_parse += 1
-                self.seen.add(url)
+                self.add_to_seen(url)
+
+    def add_to_seen(self, url):
+        self.seen.add(url)
 
     def add_source(self, url, attrs, objct={}):
         self.received = True
@@ -139,7 +145,7 @@ class Source(object):
             kwargs = self.get_kwargs(objct)
             self.in_q.put((url, attrs, kwargs))
             self.to_parse += 1
-            self.seen.add(url)
+            self.add_to_seen(url)
 
     def get_kwargs(self, objct=None):
         kwargs = {}
