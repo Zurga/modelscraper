@@ -6,6 +6,7 @@ from threading import BoundedSemaphore
 from multiprocessing import Process
 import logging
 import pprint
+import inspect
 
 from .parsers import HTMLParser
 from .helpers import str_as_tuple, wrap_list
@@ -16,7 +17,7 @@ pp = pprint.PrettyPrinter(indent=4)
 logger =  logging.getLogger(__name__)
 
 
-class BaseModel(object):
+class BaseComponent(object):
     def __init__(self, emits=None, kws={}, name=None, selector=None):
         self.emits = emits
         self.kws = kws
@@ -27,10 +28,16 @@ class BaseModel(object):
         return self.__class__(**kwargs)
 
     def __call__(self, **kwargs):
-        return self.__class__(**{**self.__dict__, **kwargs})  # noqa
+        parameters = inspect.signature(self.__init__).parameters
+        own_kwargs = [name for name in parameters
+                      if name not in ('args', 'kwargs')]
+        kwargs = {**{k:self.__dict__[k] for k in own_kwargs}, #noqa
+                  **kwargs}
+
+        return self.__class__(**kwargs)  # noqa
 
 
-class Attr(BaseModel):
+class Attr(BaseComponent):
     '''
     An Attr is used to hold a value for a template.
     This value is created by selecting data from the source using the selector,
@@ -127,7 +134,7 @@ def attr_dict(attrs):
     return attrs_dict
 
 
-class Template(BaseModel):
+class Template(BaseComponent):
     def __init__(self, attrs=[], dated=False, database=[], func='create',
                  parser=HTMLParser, preparser=None, required=False,
                  source=None, table='', url='', overwrite=True, *args, **kwargs):
@@ -154,7 +161,6 @@ class Template(BaseModel):
         if self.url:
             self.attrs['url'] = Attr(name='url', value=self.url)
 
-        self.validate()
         self.emit_attrs = [attr for attr in self.attrs
                            if attr.emits]
         self.transfers = [attr.name for attr in self.attrs
@@ -194,9 +200,11 @@ class Template(BaseModel):
 
         if self.emits:
             for objct in objects:
-                url = objct.get('url', False)
-                if url:
-                    self.emits.add_source(url, objct)
+                urls = objct.get('url', False)
+                if urls:
+                    for url in urls:
+                        print('adding', url, objct, objct)
+                        self.emits.add_source(url, objct, objct)
                 else:
                     warning = 'No url is specified for object {}. Cannot emit source.'
                     logging.warning(warning.format(self.name))
@@ -259,7 +267,7 @@ class Template(BaseModel):
                                              selector=selector)):
             count += i
             obj = {**obj, **attrs}
-            obj['url'] = obj.get('url', [obj.get('_url')])
+            obj['url'] = obj.get('url')
             urls.extend(obj['url'])
             if self.dated:
                 obj['_date'] = str(datetime.now())
@@ -282,7 +290,7 @@ class Template(BaseModel):
         yield from self.query()
 
 
-class ScrapeModel():
+class Scraper(object):
     def __init__(self, name='', templates=[], num_sources=1, awaiting=False,
                  schedule='', logfile='', dummy=False, recurring=[], **kwargs):
         super().__init__()
@@ -304,6 +312,7 @@ class ScrapeModel():
 
         # Populate lists of the databases used, the parsers and the sources
         for template in self.templates:
+            template.validate()
             for parser in template.parser:
                 parsers.add(parser)
             for source in template.source:
@@ -366,8 +375,6 @@ class ScrapeModel():
                     url, attrs, data = res
                     for template in templates:
                         objects, urls = template.parse(url, attrs, data)
-                        if self.dummy:
-                            pp.pprint((url, objects))
                         template.store_objects(objects, urls)
                         template.gen_source(objects)
                 elif res == False:
