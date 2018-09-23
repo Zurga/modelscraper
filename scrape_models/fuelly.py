@@ -1,27 +1,30 @@
-from modelscraper.components import ScrapeModel, Template, Attr
+from modelscraper.components import Scraper, Template, Attr
+from modelscraper.databases import MongoDB
 from modelscraper.sources import WebSource
 import string
 
 
-motorcycles = Source(urls=["http://www.fuelly.com/motorcycle"])
+vehicle_sources = WebSource(urls=["http://www.fuelly.com/motorcycle",
+                              "http://www.fuelly.com/car"],
+                        attrs=[{'type': 'motorcycle'}, {'type': 'car'}])
 vehicle_source = WebSource()
 
 vehicle_link = Template(
-    source=motorcycles,
-    name='vehicle_link', selector='.list li',
+    source=vehicle_sources,
+    name='vehicle_link', selector='.models-list li',
     attrs=[
-        Attr(name='amount',func='sel_text',
-             kws={'regex': '\((\d+)\)', 'debug': True, 'numbers': True }),
         Attr(name='url', selector='a',
-             func='sel_url', emits=vehicle_source,
-             source_condition={'amount': '> 2'}),
+             func='sel_url', emits=vehicle_source),
+        Attr(name='type', from_source=True, transfers=True)
     ]
 )
 
+database = MongoDB('fuelly_test')
 vehicle = Template(
     source=vehicle_source,
     name='vehicle', selector='.model-year-item',
-    db_type='MongoDB', db='fuelly', table='motorcycles',
+    database=database,
+    table='vehicles',
     attrs=[
         Attr(name='name', selector='.summary-view-all-link a',
                     func='sel_text'),
@@ -31,15 +34,17 @@ vehicle = Template(
                     func='sel_text', kws={'numbers': True}),
         Attr(name='avg', selector='.summary-avg-data',
                     func='sel_text'),
-        Attr(name='total_motorcycles', selector='.summary-total',
+        Attr(name='amount', selector='.summary-total',
                     func='sel_text', kws={'numbers': True}),
         Attr(name='total_fuelups', selector='.summary-fuelups',
                     func='sel_text', kws={'numbers': True}),
         Attr(name='total_miles', selector='.summary-miles',
                     func='sel_text', kws={'numbers': True}),
+        Attr(name='type', from_source=True),
+        Attr(name='amount', from_source=True)
     ]
 )
 
-fuelly = ScrapeModel(
-    name='fuelly', domain='http://www.fuelly.com', num_getters=1,
+fuelly = Scraper(
+    name='fuelly', num_getters=1,
     templates=[vehicle_link, vehicle])
