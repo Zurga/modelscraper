@@ -6,7 +6,7 @@ import pprint
 
 import click
 
-from modelscraper.components import ScrapeModel
+from modelscraper.components import Scraper
 
 
 if 'banner.txt' in os.listdir():
@@ -28,7 +28,7 @@ def main(model, dummy):
         return
     imported = vars(importlib.import_module('scrape_models.%s' % model)).values()
     scrape_models = (model for model in imported
-                     if type(model) == ScrapeModel)
+                     if type(model) == Scraper)
     for model in scrape_models:
         model.dummy = dummy
         model.start()
