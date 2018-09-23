@@ -22,7 +22,7 @@ from .selectors import ORCSSSelector
 
 logger = logging.getLogger(__name__)
 
-class BaseParser:
+class BaseParser(object):
     '''
     This class implements the methods:
         _gen_source: generate a source if the template has that specified.
@@ -30,11 +30,6 @@ class BaseParser:
                      forward it to another run.
     which can all be overridden in subclasses.
     '''
-
-    def __init__(self, **kwargs):
-        for key, value in kwargs.items():
-            setattr(self, key, value)
-
     def _convert_data(self, source):
         raise NotImplementedError()
 
@@ -230,8 +225,8 @@ class HTMLParser(BaseParser):
     '''
     A parser that is able to parse html.
     '''
-    def __init__(self, *args, **kwargs):
-        super(HTMLParser, self).__init__(*args, **kwargs)
+    def __init__(self):
+        super().__init__()
         self.scrapely_parser = None
 
     def _convert_data(self, url, data):
