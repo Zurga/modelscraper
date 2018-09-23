@@ -90,10 +90,14 @@ class BaseDatabase(object):
         #pp.pprint(objects)
         self.worker.in_q.put((template, objects, urls))
 
+    def start(self):
+        assert self.worker, "There is no worker to start"
+        self.worker.start()
+
     def stop(self):
         if self.worker.is_alive():
+            print('stopping', self.name)
             self.worker.in_q.put(None)
-            self.worker.join()
 
 
 class MongoDB(BaseDatabase):
@@ -111,7 +115,6 @@ class MongoDB(BaseDatabase):
         self.client = MongoClient(host=host, port=port, connect=False)
         db = getattr(self.client, db)
         self.worker = MongoDBWorker(parent=self, database=db, **kwargs)
-        self.worker.start()
 
 
 class MongoDBWorker(BaseDatabaseImplementation):
@@ -191,7 +194,6 @@ class CSV(BaseDatabase):
         super().__init__()
         db = os.path.abspath(template.db)
         self.worker = CSVWorker(db, parent=self)
-        self.worker.start()
 
 
 class CSVWorker(BaseDatabaseImplementation):
@@ -273,7 +275,6 @@ class Sqlite(BaseDatabase):
         sqlite3.register_adapter(dict, dictionary_adapter)
         sqlite3.register_converter('dict', dictionary_converter)
         self.worker = SqliteWorker(connection, parent=self)
-        self.worker.start()
 
 
 class SqliteWorker(BaseDatabaseImplementation):
