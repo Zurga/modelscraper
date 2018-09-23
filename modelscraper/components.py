@@ -7,7 +7,6 @@ from multiprocessing import Process
 import logging
 import pprint
 
-
 from .parsers import HTMLParser
 from .helpers import str_as_tuple, wrap_list
 from . import databases
@@ -131,7 +130,7 @@ def attr_dict(attrs):
 class Template(BaseModel):
     def __init__(self, attrs=[], dated=False, database=[], func='create',
                  parser=HTMLParser, preparser=None, required=False,
-                 source=None, table='', url='', *args, **kwargs):
+                 source=None, table='', url='', overwrite=True, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.attrs = attr_dict(attrs)
         self.dated = dated
@@ -143,6 +142,14 @@ class Template(BaseModel):
         self.source = wrap_list(source)
         self.table = table
         self.url = url
+        self.overwrite = overwrite
+
+        # Get the urls of the objects that have already been parsed to avoid
+        # overwriting them.
+        if not self.overwrite:
+            for db in self.database:
+                for obj in db.read(self):
+                    self.source.add_to_seen(obj.get('url'))
 
         if self.url:
             self.attrs['url'] = Attr(name='url', value=self.url)
@@ -277,7 +284,7 @@ class Template(BaseModel):
 
 class ScrapeModel():
     def __init__(self, name='', templates=[], num_sources=1, awaiting=False,
-                 schedule='', logfile='', dummy=False, **kwargs):
+                 schedule='', logfile='', dummy=False, recurring=[], **kwargs):
         super().__init__()
         self.name = name
         self.templates = templates
@@ -285,31 +292,31 @@ class ScrapeModel():
         self.awaiting = awaiting
         self.schedule = schedule
         self.sources = {}
+        self.recurring = recurring
         self._dummy = dummy
 
         # Set up the logging
         if logfile:
             logging.basicConfig(filename=logfile, level=logging.WARNING)
 
-        for key, value in kwargs.items():
-            setattr(self, key, value)
+        self.databases, parsers = set(), set()
+        self.sources_templates = defaultdict(list)
 
         # Populate lists of the databases used, the parsers and the sources
-        parsers, sources = self.prepare_templates()
+        for template in self.templates:
+            for parser in template.parser:
+                parsers.add(parser)
+            for source in template.source:
+                self.sources_templates[source].append(template)
+            for db in template.database:
+                self.databases.add(db)
 
         # Map the templates to instances of these parser classes.
-        self.parsers = {parser: parser(parent=self) for parser in parsers}
+        self.parsers = {parser: parser() for parser in parsers}
 
         # Set the parsers in the templates themselves.
         for template in self.templates:
             template.prepare(self.parsers)
-
-        # Create an index of all the sources used in the model and map them
-        # to the templates that parse the data from the sources.
-        self.sources_templates = defaultdict(list)
-        for template in self.templates:
-            for source in template.source:
-                self.sources_templates[source].append(template)
 
         # Restrict the amount of source workers working at the same time.
         self.semaphore = BoundedSemaphore(self.num_sources)
@@ -350,6 +357,7 @@ class ScrapeModel():
         Processes the urls in the sources provided by the model.
         Every iteration processes the data retrieved from one url for each Source.
         '''
+        self.start_databases()
         while self.sources_templates:
             empty = []
             for source, templates in self.sources_templates.items():
@@ -371,29 +379,14 @@ class ScrapeModel():
                 for source in empty:
                     self.sources_templates.pop(source)
         self.kill_databases()
-        print('done')
+
+    def start_databases(self):
+        for db in self.databases:
+            db.start()
 
     def kill_databases(self):
-        print('Waiting for the database')
-        for template in self.templates:
-            for db in template.database:
-                db.stop()
-
-    def prepare_templates(self):
-        '''
-        Check if the functions in each template are used properly
-        and return which types of databases are needed.
-        '''
-        parsers = set()
-        sources = []
-
-        for template in self.templates:
-            for parser in template.parser:
-                parsers.add(parser)
-            for attr in template.attrs:
-                if attr.emits:
-                    sources.append(attr.emits)
-        return parsers, sources
+        for db in self.databases:
+            db.stop()
 
     def get_template(self, template):
         if type(template) is Template:
