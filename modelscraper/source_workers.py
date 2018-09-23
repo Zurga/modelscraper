@@ -44,12 +44,9 @@ class BaseSourceWorker(Thread):
                 data = self.retrieve(url, kwargs)
             self._recalculate_mean(start)
 
-            if self.parent.compression == 'zip':
+            if data and self.parent.compression == 'zip':
                 data = self._read_zip_file(source.data)
-            if data:
-                self.out_q.put((url, attrs, data))
-            else:
-                logging.log(logging.WARNING, str(url) + 'produced no result' + str(kwargs))
+            self.out_q.put((url, attrs, data))
 
             self.in_q.task_done()
             self.retrieving = False
