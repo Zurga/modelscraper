@@ -142,7 +142,7 @@ class BaseParser(object):
         for attr in attrs:
             if not attr.func:
                 parsed = attr.value
-            elif attr.transfers:
+            elif attr.from_source:
                 continue
             else:
                 elements = self._apply_selector(attr.selector, data)
@@ -156,11 +156,14 @@ class BaseParser(object):
             yield attr.name, parsed
 
     def _apply_funcs(self, elements, parse_funcs):
-        if len(parse_funcs) == 1 and hasattr(parse_funcs, '__iter__'):
-            return [parse_funcs[0](el) for el in elements]
-        else:
-            parsed = [parse_funcs[0](el) for el in elements]
-            return self._apply_funcs(parsed, parse_funcs[1:])
+        try:
+            if len(parse_funcs) == 1 and hasattr(parse_funcs, '__iter__'):
+                return [parse_funcs[0](el) for el in elements]
+            else:
+                parsed = [parse_funcs[0](el) for el in elements]
+                return self._apply_funcs(parsed, parse_funcs[1:])
+        except Exception as e:
+            logging.log(logging.WARNING, str(e) + ' ' + str(elements))
 
     # TODO check if this belongs here...
     def _copy_attrs(self, objct, source):
@@ -194,7 +197,8 @@ class BaseParser(object):
         substitute: the substitute used in the replacers parameter.
         """
         if replacers:
-            text = map(replacers, text)
+            for key, subsitute in zip(replacers, substitute):
+                text = text.replace(key, substitute)
 
         if regex:
             regex = re.compile(regex)
