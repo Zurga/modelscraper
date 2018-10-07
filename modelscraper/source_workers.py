@@ -118,22 +118,6 @@ class ProgramSourceWorker(BaseSourceWorker):
 
 
 class ModuleSourceWorker(BaseSourceWorker):
-
-    """Generates data by calling another modules function."""
-
-    def __init__(self, module=None, conversion=None, *args, **kwargs):
-        """@todo: to be defined1.
-
-        :module_name: @todo
-
-        """
-        super().__init__(*args, **kwargs)
-
-        self.module = module
-        self.conversion = conversion
-        self.inits = {'module': self.module,
-                      'conversion': conversion}
-
     def retrieve(self, url, kwargs):
         """Returns the data gotten by the source
 
@@ -142,11 +126,11 @@ class ModuleSourceWorker(BaseSourceWorker):
 
         """
         for name in self.parent.func.split('.'):
-            function = getattr(self.module, name)
+            function = getattr(self.parent.module, name)
         try:
             data = function(url, **self.parent.kws)
             if self.conversion:
-                data = self.conversion(data)
+                data = self.parent.conversion(data)
             return data
         except Exception as E:
             logging.warning(' : '.join([str(E), url, str(self.parent.kws)]))
