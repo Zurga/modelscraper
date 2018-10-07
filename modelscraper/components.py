@@ -18,11 +18,40 @@ logger =  logging.getLogger(__name__)
 
 
 class BaseComponent(object):
+    """
+    A class that provides common functions for other components as well
+    as common attributes.
+
+    Attributes
+    ==========
+    emits : Source, optional
+    kws : dict or list of dict, optional
+        These are the keywords that will be passed to the 'func'
+        attribute. If multiple funcs are given, the
+    name : string, optional
+        The name given used in by the parser for this Template or attribute.
+    selector : Test
+    """
+
     def __init__(self, emits=None, kws={}, name=None, selector=None):
         self.emits = emits
-        self.kws = kws
+        '''
+        An instance of a Source which will be used to get the new data.
+        Which data will be passed in the queue of the source depends on
+        the class it is used in, see the respective classes for their
+        respective uses.
+        '''
         self.name = name
-        self.selector = selector
+        '''
+        The name which will be used to print and register the object in the
+        Template or Scraper
+        '''
+        self.selector = wrap_list(selector)
+        '''
+        A selector which will be used to gather the information to which the
+        template is applied.
+        '''
+        self.kws = wrap_list(kws)
 
     def _replicate(self, **kwargs):
         return self.__class__(**kwargs)
@@ -48,7 +77,7 @@ class Attr(BaseComponent):
                  source_condition={}, type=None, arity=1, from_source=False,
                  transfers=False, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.func = str_as_tuple(func)
+        self.func = wrap_list(func)
         self.value = value
         self.attr_condition = attr_condition
         self.source_condition = source_condition
@@ -59,11 +88,13 @@ class Attr(BaseComponent):
 
         # Ensure that the kws are encapsulated in a list with the same length
         # as the funcs.
+        '''
         if self.func:
             self.kws = wrap_list(self.kws)
             difference = len(self.func) - len(self.kws)
             if difference:
                 self.kws = [*self.kws, *[{} for _ in range(difference)]]
+        '''
 
     def __call__(self, **kwargs):
         new_kws = kwargs.get('kws', {})
@@ -89,19 +120,6 @@ class Attr(BaseComponent):
             if self == var:
                 print(name, var)
                 self.name = name
-
-    def set_func(self, parser):
-        self.func = [partial(getattr(parser, func), **kw)
-                    if type(func) == str
-                    else func
-                    for func, kw in zip(self.func, self.kws)]
-
-    def _format_source_kws(self, source):
-        if source.add_value and source.copy_attrs:
-            for keyword, attrs in self.add_value.items():
-                values = {attr: self.attrs[attr].value[0] for attr in
-                          str_as_tuple(attrs) if self.attrs[attr].value}
-                self.kws[keyword].format(**values)
 
     def _evaluate_condition(self, objct):
         # TODO fix this ugly bit of code
@@ -165,18 +183,20 @@ class Template(BaseComponent):
                            if attr.emits]
         self.transfers = [attr.name for attr in self.attrs
                           if attr.transfers]
+        self.func_attrs = [attr for attr in self.attrs
+                           if attr.func]
 
     def validate(self):
         # Validate the functions of the attrs
         for parser in self.parser:
-            for attr in (a for a in self.attrs if not a.from_source):
+            for attr in self.attrs:
                 for database in self.database:
                     database.check_forbidden_chars(attr.name)
-                for func in attr.func:
-                    if type(func) is str and not getattr(parser, func, False):
-                        raise Exception(
-                            '{} does not exist in {}'.format(
-                                func, parser.__name__))
+        if not self.table:
+            for database in self.database:
+                if not database.table:
+                    raise Exception(str(self.name) +
+                                    ' template needs a table to be set')
 
     def attrs_to_dict(self):
         return {a.name: a.value for a in self.attrs}
@@ -192,18 +212,28 @@ class Template(BaseComponent):
 
     def gen_source(self, objects):
         for attr in self.emit_attrs:
-            for objct in objects:
-                if attr._evaluate_condition(objct):
-                    for url in objct[attr.name]:
-                        attrs = {key: objct[key] for key in self.transfers}
-                        attr.emits.add_source(url, attrs, objct)
+            # If a mapping has been passed, we pass the previous url on to the next
+            # source.
+            if isinstance(attr.emits, dict):
+                for objct in objects:
+                    attrs = {'_url': objct['_url']}
+                    for value in objct[attr.name]:
+                        source = attr.emits.get(value)
+                        if source:
+                            source.add_source(objct['_url'], attrs, objct)
+            else:
+                for objct in objects:
+                    if attr._evaluate_condition(objct):
+                        for url in objct[attr.name]:
+                            attrs = {key: objct[key] for key in self.transfers}
+                            attrs['_url'] = objct['_url']
+                            attr.emits.add_source(url, attrs, objct)
 
         if self.emits:
             for objct in objects:
                 urls = objct.get('url', False)
                 if urls:
                     for url in urls:
-                        print('adding', url, objct, objct)
                         self.emits.add_source(url, objct, objct)
                 else:
                     warning = 'No url is specified for object {}. Cannot emit source.'
@@ -214,65 +244,31 @@ class Template(BaseComponent):
         self.attrs = attr_dict((Attr(name=name, value=value) for
                       name, value in attrs.items()))
 
-    def prepare(self, parsers=[]):
-        # Instantiate the parser if none was provided
-        if not parsers:
-            self.parser = [p() for p in self.parser]
-        else:
-            self.parser = [parsers[p] for p in self.parser]
-
-        if self.selector:
-            if len(self.parser) > 1:
-                self.selector = [parser.get_selector(selector)
-                                for parser, selector in
-                                zip_longest(self.parser, self.selector)]
-            else:
-                self.selector = [self.parser[0].get_selector(self.selector)]
-
-        # Set the functions of the attrs
-        parser = self.parser[-1]
-        forwarded = []
-        for attr in self.attrs:
-            if attr.from_source:
-                forwarded.append(attr.name)
-            else:
-                attr.set_func(parser)
-                if attr.selector:
-                    attr.selector = parser.get_selector(attr.selector)
-
-        for attr in forwarded:
-            self.attrs.pop(attr)
-
-    def parse(self, url, attrs, data, verbose=False):
+    def parse(self, url, attrs, raw_data, verbose=False):
         objects, urls = [], []
-        if self.preparser:
-            data = self.preparser(data)
-        if len(self.parser) > 1:
-            for parser, selector in zip(self.parser[:-1],
-                                        self.selector[:-1]):
-                data = parser.parse(url, data, self, selector=selector,
-                                    gen_objects=False)
 
-            parser = self.parser[-1]
-        else:
-            parser = self.parser[0]
         if self.selector:
-            selector = self.selector[-1]
+            extracted = raw_data
+            for sel in self.selector:
+                extracted = sel(url, extracted)
         else:
-            selector = None
+            extracted = (raw_data,)
 
-        count = 0
-        # Create the actual objects
-        for i, obj in enumerate(parser.parse(url, data, template=self,
-                                             selector=selector)):
-            count += i
-            obj = {**obj, **attrs}
-            obj['url'] = obj.get('url')
+        for data in extracted:
+            obj = {'_url': url, **attrs}
+
+            no_value = 0
+            for attr in self.func_attrs:
+                value = data
+                for func in attr.func:
+                    value = func(url, value)
+                obj[attr.name] = list(value)
+
             urls.extend(obj['url'])
             if self.dated:
                 obj['_date'] = str(datetime.now())
-
             objects.append(obj)
+
         return objects, urls
 
     def store_objects(self, objects, urls):
@@ -313,19 +309,10 @@ class Scraper(object):
         # Populate lists of the databases used, the parsers and the sources
         for template in self.templates:
             template.validate()
-            for parser in template.parser:
-                parsers.add(parser)
             for source in template.source:
                 self.sources_templates[source].append(template)
             for db in template.database:
                 self.databases.add(db)
-
-        # Map the templates to instances of these parser classes.
-        self.parsers = {parser: parser() for parser in parsers}
-
-        # Set the parsers in the templates themselves.
-        for template in self.templates:
-            template.prepare(self.parsers)
 
         # Restrict the amount of source workers working at the same time.
         self.semaphore = BoundedSemaphore(self.num_sources)
@@ -375,6 +362,7 @@ class Scraper(object):
                     url, attrs, data = res
                     for template in templates:
                         objects, urls = template.parse(url, attrs, data)
+                        pp.pprint(objects)
                         template.store_objects(objects, urls)
                         template.gen_source(objects)
                 elif res == False:
