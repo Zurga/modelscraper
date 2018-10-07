@@ -38,19 +38,15 @@ class MetaDatabaseImplementation(type):
 class BaseDatabaseImplementation(Process, metaclass=MetaDatabaseImplementation):
     create, read, update, delete = None, None, None, None
 
-    def __init__(self, parent=None, table='', cache=10):
+    def __init__(self, parent=None, database=None, table='', cache=10):
         super().__init__()
+        self.parent = parent
+        self.db = database
+        self.table = table
         self.in_q = parent.in_q
+        self.parent = parent
         self.cache = cache
         self.templates = None
-
-    @property
-    def templates(self):
-        return self._templates
-
-    @templates.setter
-    def templates(self, templates):
-        self._templates = templates
 
     def run(self):
         while True:
@@ -68,8 +64,7 @@ class BaseDatabaseImplementation(Process, metaclass=MetaDatabaseImplementation):
                     res = func(template, objects, urls, **template.kws)
                 self.in_q.task_done()
             except Exception as e:
-                print(id(objects))
-                logging.log(logging.WARNING,
+                logging.log(logging.ERROR,
                             'This template did not store correctly ' +
                             str(template.name) + str(template.url) +
                             str(objects) + str(e))
@@ -110,30 +105,28 @@ class MongoDB(BaseDatabase):
     name = 'MongoDB'
     forbidden_chars = ('.', '$')
 
-    def __init__(self, db, table='', host=None, port=None, **kwargs):
-        super().__init__()
+    def __init__(self, db, host=None, port=None, **kwargs):
+        super().__init__(**kwargs)
         self.client = MongoClient(host=host, port=port, connect=False)
         db = getattr(self.client, db)
         self.worker = MongoDBWorker(parent=self, database=db, **kwargs)
 
 
 class MongoDBWorker(BaseDatabaseImplementation):
-    def __init__(self, database, **kwargs):
-        super().__init__(**kwargs)
-        self.db = database
-        # TODO add connection details
-
-    def get_collection(self, template):
-        return getattr(self.db, template.table)
+    def get_collection(self, table):
+        if table:
+            return getattr(self.db, table)
+        return getattr(self.db, self.table)
 
     #!@add_other_doc(Collection.insert_many)
     def create(self, template, objects, urls, *args, **kwargs):
-        coll = self.get_collection(template)
+        coll = self.get_collection(template.table)
         return coll.insert_many(objects, *args, **kwargs)
 
     #!@add_other_doc(Collection.bulk_write)
-    def update(self, template, objects, urls, key='', method='$set', upsert=True, date=False):
-        coll = self.get_collection(template)
+    def update(self, template, objects, urls, key='', method='$set',
+               upsert=True, date=False):
+        coll = self.get_collection(template.table)
         queries = self._create_queries(key, objects)
         if date:
             date = datetime.datetime.fromtimestamp(time.time())
@@ -146,13 +139,9 @@ class MongoDBWorker(BaseDatabaseImplementation):
         return coll.bulk_write(db_requests)
 
     #!@add_other_doc(Collection.find)
-    def read(self, template=None, query={}, **kwargs):
-        coll = self.get_collection(template)
-
-        for db_object in coll.find(query, **kwargs):
-            objct = template()
-            objct.attrs_from_dict(db_object)
-            yield objct
+    def read(self, table='', query={}, **kwargs):
+        coll = self.get_collection(table)
+        yield from coll.find(query, **kwargs)
 
     def delete(self):
         pass
@@ -165,7 +154,13 @@ class MongoDBWorker(BaseDatabaseImplementation):
 
 
 # TODO fix this to the new spec
-class ShellCommand(BaseDatabaseImplementation):
+class ShellCommand(BaseDatabase):
+    name = 'ShellCommand'
+
+    def __init__(self, db, table='', database=None):
+        super().__init__()
+
+class ShellCommandWorker(BaseDatabaseImplementation):
     def __init__(self):
         super.__init__()
 
@@ -201,13 +196,13 @@ class CSVWorker(BaseDatabaseImplementation):
         super().__init__(*args, **kwargs)
         self.index = {}
         self.columns = {}
-        self.db = db
 
-    def filename(self, template):
-        return self.db + template.table + '.csv'
+    def filename(self, table):
+        assert table or self.table, 'No table has been set in the template'
+        return '{}_{}.csv'.format(self.db, table if table else self.table)
 
     def check_existing(self, template):
-        filename = self.filename(template)
+        filename = self.filename(template.table)
         if os.path.isfile(filename):
             self.index[filename] = self.create_index(filename)
 
@@ -220,39 +215,30 @@ class CSVWorker(BaseDatabaseImplementation):
         return index
 
     def create(self, template, objects, urls, **kwargs):
-        filename = self.filename(template)
+        filename = self.filename(template.table)
         if not self.index.get('filename', False):
             self.index[filename] = self.create_index(filename)
-        try:
-            with open(filename, 'a') as fle:
-                writer = csv.DictWriter(fle,
-                                        fieldnames=objects[0].keys())
-                writer.writeheader()
-                writer.writerows(objects)
-                index = dict(enumerate((o['_url'] for o in objects)))
-                self.index[filename] = {**self.index[filename], **index}
-        except Exception as E:
-            print('CSVDatabse', E)
-            return False
-        return True
+        with open(filename, 'a') as fle:
+            writer = csv.DictWriter(fle,
+                                    fieldnames=objects[0].keys())
+            writer.writeheader()
+            writer.writerows(objects)
+            index = dict(enumerate((o['_url'] for o in objects)))
+            self.index[filename] = {**self.index[filename], **index}
 
+    # TODO Fix this
     def read(self, template, urls):
         pass
 
     def update(self, template, objects, urls):
-        filename = self.filename(template)
+        filename = self.filename(template.table)
         if not self.index.get('filename', False):
             self.index[filename] = self.create_index(filename)
-        try:
-            with open(filename, 'a') as fle:
-                writer = csv.DictWriter(fle,
-                                        fieldnames=objects[0].keys())
-                writer.writerows(objects)
-        except Exception as E:
-            print('CSVDatabse', E)
-            return False
-        return True
-        pass
+
+        with open(filename, 'a') as fle:
+            writer = csv.DictWriter(fle,
+                                    fieldnames=objects[0].keys())
+            writer.writerows(objects)
 
     def delete(self, template):
         pass
@@ -300,19 +286,24 @@ class SqliteWorker(BaseDatabaseImplementation):
         self.connections = {}
         self.db = db
 
+    def get_table(self, table):
+        if not table:
+            return self.table
+        return table
+
     def create_schema(self, template):
         attrs = template.attrs
+        table = self.get_table(template.table)
         # TODO set correct types for the attrs
-        yield self.template_table.format(table=template.table)
-        yield self.template_index.format(table=template.table)
-        yield from self.attr_schema(template)
+        yield self.template_table.format(table=table)
+        yield self.template_index.format(table=table)
+        yield from self.attr_schema(template, table)
 
-    def attr_schema(self, template):
+    def attr_schema(self, template, table):
         '''
         Creates the table definitions for each attribute of a
         template.
         '''
-        table = template.table
         for attr in template.attrs:
             if attr.type:
                 value_type = attr.type
@@ -334,17 +325,20 @@ class SqliteWorker(BaseDatabaseImplementation):
 
     def create(self, template, objects, urls, *args, **kwargs):
         self.check_schema(template)
+        table = self.get_table(template.table)
+
         query = "INSERT INTO {table} VALUES (?, ?);"
+
         with self.db as con:
             # By inserting NULL into the id column SQLITE will create the id.
             values = list(zip([None] * len(urls), urls))
-            con.executemany(query.format(table=template.table), values)
+            con.executemany(query.format(table=table), values)
 
             # We select all the ids that were inserted to create the attrs
-            urls_ids = dict(self.urls_ids(template.table, urls))
+            urls_ids = dict(self.urls_ids(table, urls))
 
             for attr in template.attrs.keys():
-                table_name = '_'.join((template.table, attr))
+                table_name = '_'.join((table, attr))
 
                 for obj, url in zip(objects, urls):
                     db_id = urls_ids[url]
@@ -362,25 +356,28 @@ class SqliteWorker(BaseDatabaseImplementation):
 
     def update(self, template, objects, urls, *args, **kwargs):
         self.check_schema(template)
+        table = self.get_table(template.table)
+
         query = "UPDATE {} SET {} = ? WHERE id = ?"
-        for (url, i) in self.urls_ids(template.table, urls):
+
+        for (url, i) in self.urls_ids(table, urls):
             obj_idx = urls.index(url)
             obj = objects[obj_idx]
 
             for attr in obj.keys():
-                table_name = '_'.join((template.name, attr))
+                table_name = '_'.join((table, attr))
                 for value in obj[attr]:
                     con.execute(query.format(table_name, attr), (value, i))
 
     def delete(self, template, objects, urls, *args, **kwargs):
         self.check_schema(template)
-        urls_ids = dict(self.urls_ids(template.table, urls))
+        table = self.get_table(template.table)
+        urls_ids = dict(self.urls_ids(table, urls))
         delete_query = 'DELETE FROM {table} WHERE id = ?'
         with self.connect(template) as con:
             for url in urls:
                 db_id = urls_ids[url]
-                con.execute(delete_query.format(table=template.table),
-                            (db_id,))
+                con.execute(delete_query.format(table), (db_id,))
 
     #TODO fix this method
     def read(self, template, urls, *args, **kwargs):
