@@ -69,16 +69,9 @@ class Source(object):
             worker.start()
 
     @classmethod
-    def from_db(cls, template, url='url', query={}, **kwargs):
-        db_type = template.db_type[0]
-
-        # Check if the database has been instantiated by the Scrapeworker
-        if isinstance(db_type, type):
-            db_type = db_type()
-        elif type(db_type) is str:
-            db_type = getattr(databases, db_type)()
-        for t in db_type.read(template=template, query=query):
-            attr = t.attrs.get(url, [])
+    def from_db(cls, database, table='', url='url', query={}, **kwargs):
+        for obj in database.read(table=table, query=query):
+            attr = t.attrs.pop(url, [])
             if type(attr.value) is not list:
                 values = [attr.value]
             else:
@@ -190,7 +183,7 @@ class Source(object):
 
 
 class WebSource(Source):
-    kwargs = ('headers', 'data', 'form', 'params')
+    kwargs = ('headers', 'data', 'form', 'params', 'cookies')
     source_worker = WebSourceWorker
 
     def __init__(self, cookies=None, data=[], domain='', form=[],
@@ -210,10 +203,6 @@ class WebSource(Source):
         self.time_out = time_out
         self.user_agent = user_agent
         self.func = func
-
-        if self.cookies:
-            requests.utils.add_dict_to_cookiejar(self.session.cookies,
-                                                 self.cookies)
 
     def get_kwargs(self, objct=None):
         if not self.user_agent:
@@ -245,6 +234,19 @@ class ProgramSource(Source):
 
 class ModuleSource(Source):
     source_worker = ModuleSourceWorker
+
+    """Generates data by calling another modules function."""
+
+    def __init__(self, module=None, conversion=None, *args, **kwargs):
+        """@todo: to be defined1.
+
+        :module_name: @todo
+
+        """
+        super().__init__(*args, **kwargs)
+
+        self.module = module
+        self.conversion = conversion
 
 class APISource(Source):
     source_worker = APISourceWorker
