@@ -1,185 +1,17 @@
 from collections import defaultdict
-from multiprocessing import JoinableQueue
-from queue import Empty
-from threading import BoundedSemaphore
 from copy import copy
 import logging
 import types
+import os
 
 import requests
 from user_agent import generate_user_agent
-from pybloom_live import ScalableBloomFilter
 
+from .components import Source
 from .helpers import str_as_tuple
 from .source_workers import WebSourceWorker, FileSourceWorker, \
     ProgramSourceWorker, ModuleSourceWorker, APISourceWorker
 
-
-class Source(object):
-    kwargs = []
-    def __init__(self, name='', kws={}, attrs=[], url_template='{}',
-                 urls=[], func='', test_urls=[], n_workers=1, compression='',
-                 kwargs_format={}, duplicate=False, repeat=False):
-        self.attrs = attrs
-        self.compression = compression
-        self.duplicate = duplicate
-        self.func = func
-        self.kwargs_format = kwargs_format
-        self.kws = kws
-        self.n_workers = n_workers
-        self.name = name
-        self.repeat = repeat
-        self.url_template = url_template
-        self.urls = urls
-
-        self.in_q = JoinableQueue()
-        self.out_q = JoinableQueue()
-        self.seen = ScalableBloomFilter()
-        self.test_urls = str_as_tuple(test_urls)
-        self._semaphore = BoundedSemaphore(self.n_workers)
-        self.url_amount = int((self.n_workers / 2) + 10)
-        self.to_parse = 0
-        self._backup_sources = None
-        self.url_attrs = defaultdict(dict)
-        if not self.urls:
-            self.received = False
-        else:
-            self.received = True
-
-    @property
-    def semaphore(self):
-        return self._semaphore
-
-    @semaphore.setter
-    def semaphore(self, semaphore):
-        if semaphore._value == self.n_workers:
-            self._semaphore = semaphore
-        else:
-            self._semaphore = BoundedSemaphore(self.n_workers)
-        self.initialize_workers()
-
-    def initialize_workers(self):
-        self.workers = [
-            self.source_worker(parent=self, id=1, in_q=self.in_q,
-                               out_q=self.out_q, semaphore=self._semaphore,
-                               )
-            for _ in range(self.n_workers)]
-
-        for worker in self.workers:
-            worker.start()
-
-    @classmethod
-    def from_db(cls, database, table='', url='url', query={}, **kwargs):
-        for obj in database.read(table=table, query=query):
-            attr = t.attrs.pop(url, [])
-            if type(attr.value) is not list:
-                values = [attr.value]
-            else:
-                values = attr.value
-            for v in values:
-                yield cls(url=v, **kwargs)
-
-    def get_source(self):
-        assert self.workers, "No workers have been started, call \
-            'initialize_workers'"
-        self.consume()
-
-        try:
-            url, data = self.out_q.get(timeout=1)
-            attrs = self.url_attrs[url]
-            self.out_q.task_done()
-            self.to_parse -= 1
-            if not data:
-                logging.log(logging.WARNING, str(url) + 'produced no result')
-                return None
-            return url, attrs, data
-        except Empty:
-            if self.received and not self.to_parse and not all(
-                    w.retrieving for w in self.workers):
-                print('stopping source', self.name)
-                for worker in self.workers:
-                    self.in_q.put(None)
-                for worker in self.workers:
-                    worker.join()
-                return False
-        return None
-
-    def consume(self):
-        if self.urls:
-            for _ in range(self.url_amount):
-                if type(self.urls) is list:
-                    try:
-                        url = self.urls.pop()
-                    except IndexError:
-                        self.urls = False
-                        break
-                elif isinstance(self.urls, types.GeneratorType):
-                    try:
-                        url = next(self.urls)
-                    except StopIteration:
-                        self.urls = False
-                        break
-
-                if self.attrs and type(self.attrs) is list:
-                    attrs = self.attrs.pop()
-                else:
-                    attrs = {}
-
-                self.url_attrs[url] = attrs
-                kwargs = self.get_kwargs()
-
-                url = self.url_template.format(url)
-                self.in_q.put((url, kwargs))
-                self.to_parse += 1
-                self.add_to_seen(url)
-
-    def add_to_seen(self, url):
-        self.seen.add(url)
-
-    def add_source(self, url, attrs, objct={}):
-        self.received = True
-        url = self.url_template.format(url)
-        if (url not in self.seen or self.repeat) or self.duplicate:
-            kwargs = self.get_kwargs(objct)
-            self.url_attrs[url] = attrs
-            self.in_q.put((url, kwargs))
-            self.to_parse += 1
-            self.add_to_seen(url)
-
-    def get_kwargs(self, objct=None):
-        kwargs = {}
-        for key in self.kwargs:
-            value = getattr(self, key)
-            if value:
-                # If the kwargs are in a list or generator, we get the next
-                # value.
-                if type(value) is list:
-                    value = value.pop(0)
-                elif type(value) is types.GeneratorType:
-                    try:
-                        value = next(value)
-                    except StopIteration:
-                        continue
-
-                # Format the value for the keyword argument based on an object
-                # that was passed.
-                if objct and key in self.kwargs_format and type(value) is str:
-                    value = value.format(**{k:objct[k] for k in
-                                            self.kwargs_format[key]})
-
-                kwargs[key] = value
-        return kwargs
-
-    def use_test_urls(self):
-        if type(self.urls) != types.GeneratorType:
-            self._backup_sources = copy(self.urls)
-        else:
-            self._backup_sources = self.urls
-        self.urls = self.test_urls if hasattr(self, 'test_urls') else []
-
-    def restore_urls(self):
-        if self._backup_sources:
-            self.urls = self._backup_sources
 
 
 class WebSource(Source):
@@ -222,6 +54,36 @@ class WebSource(Source):
                 super().add_source(url, attrs, objct)
         else:
             super().add_source(url, attrs, objct)
+
+class BrowserSource(WebSource):
+    kwargs = ('data', 'form', 'params', 'cookies')
+    def __init__(self, browser='firefox-esr', browser_executable='', *args, **kwargs):
+        assert browser.lower() == 'firefox-esr', \
+            'Please use only firefox  as the browser, more will be added later'
+        from selenium.webdriver.firefox.options import Options
+        from selenium.webdriver.firefox.firefox_binary import FirefoxBinary
+        from seleniumrequests import Firefox as driver
+
+        if not browser_executable:
+            binary = os.popen('which ' + browser).read().strip()
+        else:
+            binary = browser_executable
+        assert binary != '', 'The browser you chose was not installed on the system'
+        binary = FirefoxBinary(binary)
+
+        options = Options()
+        options.set_headless = True
+        options.add_argument('--headless')
+
+        browser = driver(firefox_binary=binary, firefox_options=options)
+        super().__init__(session=browser, *args, **kwargs)
+
+    def get_kwargs(self, objct=None):
+        return super(WebSource, self).get_kwargs(objct)
+
+    def stop(self):
+        self.session.quit()
+        super().stop()
 
 class FileSource(Source):
     source_worker = FileSourceWorker
