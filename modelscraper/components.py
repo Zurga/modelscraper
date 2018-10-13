@@ -3,10 +3,14 @@ from datetime import datetime
 from itertools import zip_longest, chain
 from functools import partial
 from threading import BoundedSemaphore
-from multiprocessing import Process
+from multiprocessing import Process, JoinableQueue
+from queue import Empty
+
 import logging
 import pprint
 import inspect
+
+from pybloom_live import ScalableBloomFilter
 
 from .parsers import HTMLParser
 from .helpers import str_as_tuple, wrap_list
@@ -66,16 +70,206 @@ class BaseComponent(object):
         return self.__class__(**kwargs)  # noqa
 
 
+class Source(object):
+    kwargs = []
+    def __init__(self, name='', kws={}, attrs=[], url_template='{}',
+                 urls=[], func='', test_urls=[], n_workers=1, compression='',
+                 kwargs_format={}, duplicate=False, repeat=False,
+                 wait=False):
+        self.attrs = attrs
+        self.compression = compression
+        self.duplicate = duplicate
+        self.func = func
+        self.kwargs_format = kwargs_format
+        self.kws = kws
+        self.n_workers = n_workers
+        self.name = name
+        self.repeat = repeat
+        self.url_template = url_template
+        self.urls = urls
+
+        self.in_q = JoinableQueue()
+        self.out_q = JoinableQueue()
+        self.seen = ScalableBloomFilter()
+        self.upstream_sources = []
+        self.test_urls = str_as_tuple(test_urls)
+        self._semaphore = BoundedSemaphore(self.n_workers)
+        self.url_amount = int((self.n_workers / 2) + 10)
+        self.to_parse = 0
+        self._backup_sources = None
+        self.url_attrs = defaultdict(dict)
+        self.wait = wait
+
+        if not self.urls or wait:
+            self.received = False
+        else:
+            self.received = True
+
+    @property
+    def semaphore(self):
+        return self._semaphore
+
+    @semaphore.setter
+    def semaphore(self, semaphore):
+        if semaphore._value == self.n_workers:
+            self._semaphore = semaphore
+        else:
+            self._semaphore = BoundedSemaphore(self.n_workers)
+        self.initialize_workers()
+
+    def register_upstream_source(self, source):
+        self.upstream_sources.append(source)
+
+    def is_upstream_alive(self):
+        return any(source.is_alive() for source in self.upstream_sources)
+
+    def is_alive(self):
+        return any(worker.is_alive() for worker in self.workers)
+
+    def retrieving(self):
+        return any(w.retrieving for w in self.workers)
+
+    def initialize_workers(self):
+        self.workers = [
+            self.source_worker(parent=self, id=1, in_q=self.in_q,
+                               out_q=self.out_q, semaphore=self._semaphore,
+                               )
+            for _ in range(self.n_workers)]
+
+        for worker in self.workers:
+            worker.start()
+
+    @classmethod
+    def from_db(cls, database, table='', url='url', query={}, **kwargs):
+        for obj in database.read(table=table, query=query):
+            attr = t.attrs.pop(url, [])
+            if type(attr.value) is not list:
+                values = [attr.value]
+            else:
+                values = attr.value
+            for v in values:
+                yield cls(url=v, **kwargs)
+
+    def get_source(self):
+        assert self.workers, "No workers have been started, call \
+            'initialize_workers'"
+        self.consume()
+
+        try:
+            url, data = self.out_q.get(timeout=1)
+            attrs = self.url_attrs[url]
+            self.out_q.task_done()
+            self.to_parse -= 1
+            if not data:
+                logging.log(logging.WARNING, str(url) + 'produced no result')
+                return None
+            return url, attrs, data
+        except Empty:
+            if self._should_terminate():
+                self.stop()
+                return False
+
+    def _should_terminate(self):
+        if self.received and not self.to_parse and not self.retrieving():
+            return True
+        elif self.upstream_sources and not self.is_upstream_alive():
+            return True
+        return False
+
+    def stop(self):
+        for worker in self.workers:
+            self.in_q.put(None)
+        for worker in self.workers:
+            worker.join()
+
+    def consume(self):
+        if self.urls and not self.wait:
+            for _ in range(self.url_amount):
+                if type(self.urls) is list:
+                    try:
+                        url = self.urls.pop()
+                    except IndexError:
+                        self.urls = False
+                        break
+                elif isinstance(self.urls, types.GeneratorType):
+                    try:
+                        url = next(self.urls)
+                    except StopIteration:
+                        self.urls = False
+                        break
+
+                if self.attrs and type(self.attrs) is list:
+                    attrs = self.attrs.pop()
+                else:
+                    attrs = {}
+
+                self.url_attrs[url] = attrs
+                kwargs = self.get_kwargs()
+
+                url = self.url_template.format(url)
+                self.in_q.put((url, kwargs))
+                self.to_parse += 1
+                self.add_to_seen(url)
+
+    def add_to_seen(self, url):
+        self.seen.add(url)
+
+    def add_source(self, url, attrs, objct={}):
+        self.received = True
+        self.wait = False
+        url = self.url_template.format(url)
+        if (url not in self.seen or self.repeat) or self.duplicate:
+            kwargs = self.get_kwargs(objct)
+            self.url_attrs[url] = attrs
+            self.in_q.put((url, kwargs))
+            self.to_parse += 1
+            self.add_to_seen(url)
+
+    def get_kwargs(self, objct=None):
+        kwargs = {}
+        for key in self.kwargs:
+            value = getattr(self, key)
+            if value:
+                # If the kwargs are in a list or generator, we get the next
+                # value.
+                if type(value) is list:
+                    value = value.pop(0)
+                elif type(value) is types.GeneratorType:
+                    try:
+                        value = next(value)
+                    except StopIteration:
+                        continue
+
+                # Format the value for the keyword argument based on an object
+                # that was passed.
+                if objct and key in self.kwargs_format and type(value) is str:
+                    value = value.format(**{k:objct[k] for k in
+                                            self.kwargs_format[key]})
+
+                kwargs[key] = value
+        return kwargs
+
+    def use_test_urls(self):
+        if type(self.urls) != types.GeneratorType:
+            self._backup_sources = copy(self.urls)
+        else:
+            self._backup_sources = self.urls
+        self.urls = self.test_urls if hasattr(self, 'test_urls') else []
+
+    def restore_urls(self):
+        if self._backup_sources:
+            self.urls = self._backup_sources
+
+
 class Attr(BaseComponent):
     '''
     An Attr is used to hold a value for a template.
     This value is created by selecting data from the source using the selector,
     after which the "func" is called on the selected data.
     '''
-
     def __init__(self, func=None, value=None, attr_condition={},
                  source_condition={}, type=None, arity=1, from_source=False,
-                 transfers=False, *args, **kwargs):
+                 transfers=False, stores=True, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.func = wrap_list(func)
         self.value = value
@@ -85,6 +279,7 @@ class Attr(BaseComponent):
         self.arity = arity
         self.from_source = from_source
         self.transfers = transfers
+        self.stores = True
 
         # Ensure that the kws are encapsulated in a list with the same length
         # as the funcs.
@@ -116,7 +311,6 @@ class Attr(BaseComponent):
 
     def set_name(self):
         for name, var in globals().items():
-            print(name, var)
             if self == var:
                 print(name, var)
                 self.name = name
@@ -181,6 +375,16 @@ class Template(BaseComponent):
 
         self.emit_attrs = [attr for attr in self.attrs
                            if attr.emits]
+
+        # Register the upstream sources for each source that expects something.
+        for attr in self.emit_attrs:
+            for source in self.source:
+                attr.emits.register_upstream_source(source)
+
+        if self.emits:
+            for source in self.source:
+                self.emits.register_upstream_source(source)
+
         self.transfers = [attr.name for attr in self.attrs
                           if attr.transfers]
         self.func_attrs = [attr for attr in self.attrs
@@ -264,7 +468,7 @@ class Template(BaseComponent):
                     value = func(url, value)
                 obj[attr.name] = list(value)
 
-            urls.extend(obj['url'])
+            urls.extend(obj.get('url', []))
             if self.dated:
                 obj['_date'] = str(datetime.now())
             objects.append(obj)
@@ -302,7 +506,8 @@ class Scraper(object):
         # Set up the logging
         if logfile:
             logging.basicConfig(filename=logfile, level=logging.WARNING)
-
+        else:
+            logging.basicConfig(level=logging.WARNING)
         self.databases, parsers = set(), set()
         self.sources_templates = defaultdict(list)
 
@@ -362,7 +567,7 @@ class Scraper(object):
                     url, attrs, data = res
                     for template in templates:
                         objects, urls = template.parse(url, attrs, data)
-                        pp.pprint(objects)
+                        #pp.pprint(objects)
                         template.store_objects(objects, urls)
                         template.gen_source(objects)
                 elif res == False:
@@ -370,9 +575,8 @@ class Scraper(object):
                     empty.append(source)
                 else:
                     continue
-            if empty:
-                for source in empty:
-                    self.sources_templates.pop(source)
+            for source in empty:
+                self.sources_templates.pop(source)
         self.kill_databases()
 
     def start_databases(self):
