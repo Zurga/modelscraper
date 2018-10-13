@@ -5,7 +5,9 @@ import os
 import pprint
 import subprocess
 import sqlite3
+import sys
 import time
+import traceback
 from datetime import datetime
 from multiprocessing import Process, JoinableQueue
 from collections import defaultdict
@@ -16,6 +18,7 @@ from pymongo.collection import Collection
 from .helpers import add_other_doc
 
 pp = pprint.PrettyPrinter(indent=4)
+path = os.path
 
 
 unsupported = 'The "{}" function is not supported by the {} adapter'
@@ -67,7 +70,8 @@ class BaseDatabaseImplementation(Process, metaclass=MetaDatabaseImplementation):
                 logging.log(logging.ERROR,
                             'This template did not store correctly ' +
                             str(template.name) + str(template.url) +
-                            str(objects) + str(e))
+                            str(e) + str(
+                                traceback.print_tb(sys.exc_info()[-1])))
 
 
 class BaseDatabase(object):
@@ -157,13 +161,8 @@ class MongoDBWorker(BaseDatabaseImplementation):
 class ShellCommand(BaseDatabase):
     name = 'ShellCommand'
 
-    def __init__(self, db, table='', database=None):
-        super().__init__()
 
 class ShellCommandWorker(BaseDatabaseImplementation):
-    def __init__(self):
-        super.__init__()
-
     def _handle(self, item):
         for objct in item.objects:
             arguments = item.kws['command'].format(**objct).split()
@@ -187,31 +186,31 @@ class CSV(BaseDatabase):
 
     def __init__(self, db):
         super().__init__()
-        db = os.path.abspath(template.db)
-        self.worker = CSVWorker(db, parent=self)
+        db = os.path.abspath(db)
+        self.worker = CSVWorker(parent=self, database=db)
 
 
 class CSVWorker(BaseDatabaseImplementation):
-    def __init__(self, db, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+    def __init__(self, parent, database, *args, **kwargs):
+        super().__init__(parent, database, *args, **kwargs)
         self.index = {}
         self.columns = {}
 
     def filename(self, table):
-        assert table or self.table, 'No table has been set in the template'
         return '{}_{}.csv'.format(self.db, table if table else self.table)
 
     def check_existing(self, template):
         filename = self.filename(template.table)
-        if os.path.isfile(filename):
+        if path.isfile(filename):
             self.index[filename] = self.create_index(filename)
 
     def create_index(self, filename):
         index = {}
-        with open(filename) as fle:
-            reader = csv.DictReader(fle)
-            for i, row in enumerate(reader):
-                index[row['_url']] = i
+        if path.isfile(filename):
+            with open(filename) as fle:
+                reader = csv.DictReader(fle)
+                for i, row in enumerate(reader):
+                    index[row['_url']] = i
         return index
 
     def create(self, template, objects, urls, **kwargs):
@@ -260,7 +259,7 @@ class Sqlite(BaseDatabase):
                                      sqlite3.PARSE_DECLTYPES)
         sqlite3.register_adapter(dict, dictionary_adapter)
         sqlite3.register_converter('dict', dictionary_converter)
-        self.worker = SqliteWorker(connection, parent=self)
+        self.worker = SqliteWorker(parent=self, database=connection)
 
 
 class SqliteWorker(BaseDatabaseImplementation):
@@ -280,11 +279,10 @@ class SqliteWorker(BaseDatabaseImplementation):
         WHERE OLD.id = {table}_{attr}.id; END;
         '''
 
-    def __init__(self, db, new=False, **kwargs):
-        super().__init__(**kwargs)
+    def __init__(self, parent, database, new=False, **kwargs):
+        super().__init__(parent, database, **kwargs)
         self.template_schema = {}
         self.connections = {}
-        self.db = db
 
     def get_table(self, table):
         if not table:
@@ -382,3 +380,41 @@ class SqliteWorker(BaseDatabaseImplementation):
     #TODO fix this method
     def read(self, template, urls, *args, **kwargs):
         pass
+
+
+class File(BaseDatabase):
+    '''A database that has files as storage. The db parameter will be
+    interpreted as the base folder in which to store the objects. The
+    table parameter will be interpreted as the subfolders that the objects will
+    be stored in.'''
+
+    name = 'File'
+
+    def __init__(self, db, *args, **kwargs):
+        super().__init__()
+        database_folder = path.abspath(db) + '/'
+        self.worker = FileWorker(database=database_folder, parent=self)
+
+class FileWorker(BaseDatabaseImplementation):
+    def get_path(self, table):
+        full_path = self.db + table if table else self.table + '/'
+        if not path.exists(full_path):
+            os.makedirs(full_path)
+        return full_path
+
+    def create(self, template, objects, urls, **kwargs):
+        path = self.get_path(template.table)
+        for objct in objects:
+            filename = path + '/' + objct['_url'].split('/')[-1]
+            with open(filename, 'w') as fle:
+                fle.write(str(objct))
+
+    def update(self, template, objects, urls, **kwargs):
+        pass
+
+    def delete(self, template, objects, urls, **kwargs):
+        pass
+
+    def read(self, template, objects, urls, **kwargs):
+        pass
+
