@@ -42,8 +42,7 @@ class BaseParser(object):
     def _select(self, url, data, selector=None):
         data = self._convert_data(url, data)
         if selector:
-            result = selector(data)
-            return result
+            return selector(data)
         return (data,)
 
     def _modify_text(self, text, replacers=None, substitute='', regex: str='',
@@ -240,8 +239,7 @@ class HTMLParser(BaseParser):
             rows = list(zip(*[iter(table_elements)]*columns))
             yield rows
 
-
-    @add_other_doc(BaseParser._modify_text)
+    #@add_other_doc(BaseParser._modify_text)
     def attr(self, selector=None, attr: str='', **kwargs):
         '''
         Extract an attribute of an HTML element.
@@ -253,15 +251,15 @@ class HTMLParser(BaseParser):
                        **kwargs)
 
     def _attr(self, url, data, selector=None, attr='', **kwargs):
+        elements = self._select(url, data, selector)
         for element in self._select(url, data, selector):
-            attr = element.attrib.get(attr)
-            yield self._modify_text(attr, **kwargs)
+            sel_attr = element.attrib.get(attr)
+            yield self._modify_text(sel_attr, **kwargs)
 
-    @add_other_doc(BaseParser._modify_text)
-    def url(self, selector=None, **kwargs):
+    #@add_other_doc(BaseParser._modify_text)
+    def url(self, selector=None):
         selector = self._get_selector(selector)
-        return partial(self._attr, selector=selector, attr='href',
-                       **kwargs)
+        return partial(self._attr, selector=selector, attr='href')
 
     def date(self, selector=None, fmt: str='YYYYmmdd', attr: str=None, index:
                  int=None):
@@ -279,10 +277,16 @@ class HTMLParser(BaseParser):
             else:
                 date = sel_text(element, selector, index=index)
             if date:
-                return datetime.strptime(date, fmt)
+                yield datetime.strptime(date, fmt)
 
-    def sel_raw_html(self, elements):
-        return [el.raw_html for el in elements]
+    def raw_html(self, selector=None, link_replacer=''):
+        selector = self._get_selector(selector)
+        return partial(self._raw_html, selector=selector,
+                       link_replacer=link_replacer)
+
+    def _raw_html(self, url, data, selector=None, link_replacer=''):
+        for element in self._select(url, data, selector):
+            yield self._modify_text(lxhtml.tostring(element))
 
     def js_array(self, selector=None, var_name='', var_type=None):
         selector = self._get_selector(selector)
