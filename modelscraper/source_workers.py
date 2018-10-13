@@ -36,9 +36,11 @@ class BaseSourceWorker(Thread):
             start = time.time()
             item = self.in_q.get()
             if item is None:
-                print('stopping source worker', self)
                 break
-            url, kwargs = item
+            try:
+                url, kwargs = item
+            except:
+                print(item, 'this went wrong')
             with self.semaphore:
                 self.retrieving = True
                 data = self.retrieve(url, kwargs)
@@ -67,9 +69,8 @@ class WebSourceWorker(BaseSourceWorker):
     '''
     def retrieve(self, url, kwargs):
         time.sleep(self.parent.time_out)
-        func = getattr(self.parent.session, self.parent.func)
         try:
-            response = func(url, **kwargs)
+            response = self.parent.session.request(self.parent.func, url, **kwargs)
             if response:
                 return response.text
             else:
