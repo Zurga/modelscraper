@@ -110,7 +110,7 @@ class HTMLParser(BaseParser):
     A parser that is able to parse both XML and HTML.
     '''
 
-    data_types = (lxhtml.HtmlElement, etree._Element)
+    data_types = (lxhtml.HtmlElement, etree._Element, lxhtml.FormElement)
     def __init__(self, parse_escaped=True):
         super().__init__()
         self.scrapely_parser = None
