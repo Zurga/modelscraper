@@ -19,11 +19,12 @@ def _read_zip_file(zipfile):
 
 class BaseSourceWorker(Thread):
     def __init__(self, parent, id=None, in_q=None, out_q=None,
-                 semaphore=None):
+                 semaphore=None, lock=None):
         super().__init__()
         self.parent = parent
         self.id = id
         self.in_q = in_q
+        self.lock = lock
         self.out_q = out_q
         self.mean = 0
         self.total_time = 0
@@ -70,6 +71,7 @@ class WebSourceWorker(BaseSourceWorker):
     def retrieve(self, url, kwargs):
         time.sleep(self.parent.time_out)
         try:
+            print(self.parent.session)
             response = self.parent.session.request(self.parent.func, url, **kwargs)
             if response:
                 return response.text
@@ -78,12 +80,16 @@ class WebSourceWorker(BaseSourceWorker):
 
         # Retry later with a timeout,
         except requests.Timeout:
-            self.in_q.put(url)
+            self.in_q.put((url, kwargs))
+            with self.lock:
+                self.parent.to_parse += 1
             return False
 
         # Retry later with connection error.
         except requests.ConnectionError:
-            self.in_q.put(url)
+            self.in_q.put((url, kwargs))
+            with self.lock:
+                self.parent.to_parse += 1
             time.sleep(self.parent.time_out)
             return False
 
