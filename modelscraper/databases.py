@@ -77,8 +77,11 @@ class BaseDatabaseImplementation(Process, metaclass=MetaDatabaseImplementation):
 class BaseDatabase(object):
     forbidden_chars = []
 
-    def __init__(self):
+    def __init__(self, db='', table=''):
+        assert db, "At least the database name is required"
         self.in_q = JoinableQueue()
+        self.db = db
+        self.table = table
 
     def check_forbidden_chars(self, key):
         if any(c in key for c in self.forbidden_chars):
@@ -109,11 +112,11 @@ class MongoDB(BaseDatabase):
     name = 'MongoDB'
     forbidden_chars = ('.', '$')
 
-    def __init__(self, db, host=None, port=None, **kwargs):
-        super().__init__(**kwargs)
+    def __init__(self, host=None, port=None, *args, **kwargs):
+        super().__init__(*args, **kwargs)
         self.client = MongoClient(host=host, port=port, connect=False)
-        db = getattr(self.client, db)
-        self.worker = MongoDBWorker(parent=self, database=db, **kwargs)
+        db = getattr(self.client, self.db)
+        self.worker = MongoDBWorker(parent=self, database=db, table=self.table)
 
 
 class MongoDBWorker(BaseDatabaseImplementation):
@@ -184,20 +187,23 @@ class ShellCommandWorker(BaseDatabaseImplementation):
 class CSV(BaseDatabase):
     name = 'CSV database'
 
-    def __init__(self, db):
-        super().__init__()
-        db = os.path.abspath(db)
-        self.worker = CSVWorker(parent=self, database=db)
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        db = os.path.abspath(self.db)
+        self.worker = CSVWorker(parent=self, database=db, table=self.table)
 
 
 class CSVWorker(BaseDatabaseImplementation):
-    def __init__(self, parent, database, *args, **kwargs):
-        super().__init__(parent, database, *args, **kwargs)
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
         self.index = {}
         self.columns = {}
 
     def filename(self, table):
         return '{}_{}.csv'.format(self.db, table if table else self.table)
+
+    def fieldnames(self, template):
+        return [*list(template.attrs.keys()), '_url']
 
     def check_existing(self, template):
         filename = self.filename(template.table)
@@ -210,7 +216,7 @@ class CSVWorker(BaseDatabaseImplementation):
             with open(filename) as fle:
                 reader = csv.DictReader(fle)
                 for i, row in enumerate(reader):
-                    index[row['_url']] = i
+                    index[row['url']] = i
         return index
 
     def create(self, template, objects, urls, **kwargs):
@@ -219,7 +225,7 @@ class CSVWorker(BaseDatabaseImplementation):
             self.index[filename] = self.create_index(filename)
         with open(filename, 'a') as fle:
             writer = csv.DictWriter(fle,
-                                    fieldnames=objects[0].keys())
+                                    fieldnames=self.fieldnames(template))
             writer.writeheader()
             writer.writerows(objects)
             index = dict(enumerate((o['_url'] for o in objects)))
@@ -236,7 +242,7 @@ class CSVWorker(BaseDatabaseImplementation):
 
         with open(filename, 'a') as fle:
             writer = csv.DictWriter(fle,
-                                    fieldnames=objects[0].keys())
+                                    fieldnames=self.fieldnames(template))
             writer.writerows(objects)
 
     def delete(self, template):
@@ -253,13 +259,14 @@ def dictionary_converter(s):
 class Sqlite(BaseDatabase):
     name = 'SQlite'
 
-    def __init__(self, db, *args, **kwargs):
-        super().__init__()
-        connection = sqlite3.connect(db + '.db',
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        connection = sqlite3.connect(self.db + '.db',
                                      sqlite3.PARSE_DECLTYPES)
         sqlite3.register_adapter(dict, dictionary_adapter)
         sqlite3.register_converter('dict', dictionary_converter)
-        self.worker = SqliteWorker(parent=self, database=connection)
+        self.worker = SqliteWorker(parent=self, database=connection,
+                                   table=self.table)
 
 
 class SqliteWorker(BaseDatabaseImplementation):
@@ -390,10 +397,11 @@ class File(BaseDatabase):
 
     name = 'File'
 
-    def __init__(self, db, *args, **kwargs):
-        super().__init__()
-        database_folder = path.abspath(db) + '/'
-        self.worker = FileWorker(database=database_folder, parent=self)
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        database_folder = path.abspath(self.db) + '/'
+        self.worker = FileWorker(database=database_folder, parent=self,
+                                 table=self.table)
 
 class FileWorker(BaseDatabaseImplementation):
     def get_path(self, table):
