@@ -1,7 +1,6 @@
 from collections import defaultdict
 from copy import copy
 import logging
-import types
 import os
 
 import requests
@@ -38,7 +37,7 @@ class WebSource(Source):
 
     def get_kwargs(self, objct=None):
         if not self.user_agent:
-            user_agent = generate_user_agent()
+            user_agent = generate_user_agent(device_type=['desktop'])
         else:
             user_agent = self.user_agent
         other_kwargs = super().get_kwargs(objct)
@@ -46,6 +45,9 @@ class WebSource(Source):
             'headers': {
                 'User-Agent': user_agent
             }, **other_kwargs}
+        if self.func == 'post' and objct:
+            kwargs['data'] = {attr: v[0] for attr, v in objct.items()
+                                if attr not in ('_url', 'url')}
         return kwargs
 
     def add_source(self, url, attrs, objct):
