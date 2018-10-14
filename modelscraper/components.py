@@ -5,10 +5,12 @@ from functools import partial
 from threading import BoundedSemaphore
 from multiprocessing import Process, JoinableQueue
 from queue import Empty
+from threading import Lock
 
 import logging
 import pprint
 import inspect
+import types
 
 from pybloom_live import ScalableBloomFilter
 
@@ -88,15 +90,16 @@ class Source(object):
         self.url_template = url_template
         self.urls = urls
 
+        self._backup_sources = None
+        self._semaphore = BoundedSemaphore(self.n_workers)
         self.in_q = JoinableQueue()
+        self.lock = Lock()
         self.out_q = JoinableQueue()
         self.seen = ScalableBloomFilter()
-        self.upstream_sources = []
         self.test_urls = str_as_tuple(test_urls)
-        self._semaphore = BoundedSemaphore(self.n_workers)
-        self.url_amount = int((self.n_workers / 2) + 10)
         self.to_parse = 0
-        self._backup_sources = None
+        self.upstream_sources = []
+        self.url_amount = int((self.n_workers / 2) + 10)
         self.url_attrs = defaultdict(dict)
         self.wait = wait
 
@@ -118,7 +121,12 @@ class Source(object):
         self.initialize_workers()
 
     def register_upstream_source(self, source):
-        self.upstream_sources.append(source)
+        if self != source and source not in self.upstream_sources:
+            self.upstream_sources.append(source)
+
+    def remove_upstream_source(self, source):
+        if source in self.upstream_sources:
+            self.upstream_sources.pop(self.upstream_source.index(source))
 
     def is_upstream_alive(self):
         return any(source.is_alive() for source in self.upstream_sources)
@@ -133,7 +141,7 @@ class Source(object):
         self.workers = [
             self.source_worker(parent=self, id=1, in_q=self.in_q,
                                out_q=self.out_q, semaphore=self._semaphore,
-                               )
+                               lock=self.lock)
             for _ in range(self.n_workers)]
 
         for worker in self.workers:
@@ -161,7 +169,7 @@ class Source(object):
             self.out_q.task_done()
             self.to_parse -= 1
             if not data:
-                logging.log(logging.WARNING, str(url) + 'produced no result')
+                logging.log(logging.WARNING, str(url) + 'no data was returned')
                 return None
             return url, attrs, data
         except Empty:
@@ -170,9 +178,10 @@ class Source(object):
                 return False
 
     def _should_terminate(self):
-        if self.received and not self.to_parse and not self.retrieving():
+        if not self.upstream_sources and not self.to_parse and not self.retrieving():
             return True
-        elif self.upstream_sources and not self.is_upstream_alive():
+        elif self.upstream_sources and not self.is_upstream_alive() and not \
+            self.to_parse and not self.retrieving():
             return True
         return False
 
@@ -181,6 +190,7 @@ class Source(object):
             self.in_q.put(None)
         for worker in self.workers:
             worker.join()
+        print('Source.stop stopped', self.name)
 
     def consume(self):
         if self.urls and not self.wait:
@@ -272,7 +282,7 @@ class Attr(BaseComponent):
                  transfers=False, stores=True, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.func = wrap_list(func)
-        self.value = value
+        self.value = wrap_list(value)
         self.attr_condition = attr_condition
         self.source_condition = source_condition
         self.type = type
@@ -389,6 +399,8 @@ class Template(BaseComponent):
                           if attr.transfers]
         self.func_attrs = [attr for attr in self.attrs
                            if attr.func]
+        self.value_attrs = [attr for attr in self.attrs
+                            if attr.value]
 
     def validate(self):
         # Validate the functions of the attrs
@@ -438,7 +450,7 @@ class Template(BaseComponent):
                 urls = objct.get('url', False)
                 if urls:
                     for url in urls:
-                        self.emits.add_source(url, objct, objct)
+                        self.emits.add_source(url, {}, objct)
                 else:
                     warning = 'No url is specified for object {}. Cannot emit source.'
                     logging.warning(warning.format(self.name))
@@ -464,9 +476,15 @@ class Template(BaseComponent):
             no_value = 0
             for attr in self.func_attrs:
                 value = data
-                for func in attr.func:
-                    value = func(url, value)
-                obj[attr.name] = list(value)
+                try:
+                    for func in attr.func:
+                        value = func(url, value)
+                    obj[attr.name] = list(value)
+                except Exception as E:
+                    print(attr.name, attr.func)
+
+            for attr in self.value_attrs:
+                obj[attr.name] = attr.value
 
             urls.extend(obj.get('url', []))
             if self.dated:
@@ -568,15 +586,20 @@ class Scraper(object):
                     for template in templates:
                         objects, urls = template.parse(url, attrs, data)
                         #pp.pprint(objects)
-                        template.store_objects(objects, urls)
-                        template.gen_source(objects)
+                        if objects:
+                            print(source.name, len(objects))
+                            template.store_objects(objects, urls)
+                            template.gen_source(objects)
+                        else:
+                            print('no objects', url)
                 elif res == False:
                     logging.log(logging.INFO, 'stopping' + source.name)
                     empty.append(source)
                 else:
                     continue
             for source in empty:
-                self.sources_templates.pop(source)
+                source = self.sources_templates.pop(source)
+                del source
         self.kill_databases()
 
     def start_databases(self):
