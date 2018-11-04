@@ -39,16 +39,17 @@ class ORCSSSelector(object):
     in a fashion similar to an OR clause.
     '''
 
-    def __init__(self, selectors):
-        assert len(selectors) > 1 and type(selectors) in (list, tuple), \
-            "please specify more than one selector and put them in a list or tuple"
-        self.selectors = [CSSSelector(selector) for selector in selectors]
+    def __init__(self, *args):
+        assert len(args) > 1, "Add multiple selectors"
+        self.selectors = [CSSSelector(selector) for selector in args]
 
     def __call__(self, data):
         for selector in self.selectors:
             selected = selector(data)
             if selected:
                 return selected
+            return []
+
 
 
 class SliceSelector(object):
