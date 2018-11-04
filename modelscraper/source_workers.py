@@ -4,9 +4,12 @@ import subprocess
 import logging
 import traceback
 import sys
+import urllib
 
 import requests
+import dns.resolver
 
+logger = logging.getLogger(__name__)
 
 def _read_zip_file(zipfile):
     content = ''
@@ -71,7 +74,6 @@ class WebSourceWorker(BaseSourceWorker):
     def retrieve(self, url, kwargs):
         time.sleep(self.parent.time_out)
         try:
-            print(self.parent.session)
             response = self.parent.session.request(self.parent.func, url, **kwargs)
             if response:
                 return response.text
@@ -87,11 +89,18 @@ class WebSourceWorker(BaseSourceWorker):
 
         # Retry later with connection error.
         except requests.ConnectionError:
-            self.in_q.put((url, kwargs))
-            with self.lock:
-                self.parent.to_parse += 1
-            time.sleep(self.parent.time_out)
-            return False
+            # Check if the host is online or the DNS can be reached
+            try:
+                print('checking if the domain is up')
+                parsed = urllib.parse.urlparse(url)
+                record = dns.resolver.query(parsed.netloc)
+                self.in_q.put((url, kwargs))
+                with self.lock:
+                    self.parent.to_parse += 1
+                time.sleep(self.parent.time_out)
+                return False
+            except dns.resolver.Timeout:
+                return False
 
         except Exception as E:
             print(self.__class__.__name__, id(self), E)
@@ -105,7 +114,12 @@ class FileSourceWorker(BaseSourceWorker):
             with open(url, **kwargs) as fle:
                 return fle.read()
         except FileNotFoundError:
-            print('file not found', url)
+            logger.log(logging.WARNING, str(self.parent.name) +
+                        ':File not found' + str(url) + str(kwargs))
+            return False
+        except Exception as E:
+            logger.log(logging.WARNING, str(self.parent.name) +
+                        ':Could not decode the result from ' + url)
             return False
 
 
@@ -119,7 +133,7 @@ class ProgramSourceWorker(BaseSourceWorker):
             data = result.stdout.decode('utf-8')
             return data
         except Exception as E:
-            logging.log(logging.WARNING, 'Could not decode the result from ' +
+            logger.log(logging.WARNING, 'Could not decode the result from ' +
                         function + ':\n ' + stdout)
             return False
 
@@ -154,7 +168,6 @@ class APISourceWorker(BaseSourceWorker):
         return self.api_function(urls[0] if type(urls) == list else urls)
 
     def run(self):
-        print('started', self.__class__.__name__, id(self))
         while True:
             start = time.time()
             url = self.in_q.get()
