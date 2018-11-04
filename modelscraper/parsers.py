@@ -25,13 +25,6 @@ logger = logging.getLogger(__name__)
 
 
 class BaseParser(object):
-    '''
-    This class implements the methods:
-        _gen_source: generate a source if the template has that specified.
-        _add_source: add a source to the current queue or
-                     forward it to another run.
-    which can all be overridden in subclasses.
-    '''
     def _convert_data(self, source):
         raise NotImplementedError()
 
@@ -41,9 +34,11 @@ class BaseParser(object):
 
     def _select(self, url, data, selector=None):
         data = self._convert_data(url, data)
-        if selector:
-            return selector(data)
-        return (data,)
+        if data is not False:
+            if selector:
+                return selector(data)
+            return (data,)
+        return []
 
     def _modify_text(self, text, replacers=None, substitute='', regex: str='',
                 numbers: bool=False, needle=None, template=''):
@@ -85,8 +80,7 @@ class BaseParser(object):
         '''
         for element in self._select(url, data, selector):
             stripped = element.lstrip().rstrip()
-            text = self._modify_text(stripped, **kwargs)
-            yield text
+            yield self._modify_text(stripped, **kwargs)
 
     def exists(self, selector=None, key: str='', **kwargs):
         '''
@@ -102,7 +96,8 @@ class BaseParser(object):
             for t in text:
                 if key in t:
                     yield True
-                yield False
+                else:
+                    yield False
 
 
 class HTMLParser(BaseParser):
@@ -111,6 +106,7 @@ class HTMLParser(BaseParser):
     '''
 
     data_types = (lxhtml.HtmlElement, etree._Element, lxhtml.FormElement)
+    _table_row_selector = ORCSSSelector('th', 'td')
     def __init__(self, parse_escaped=True):
         super().__init__()
         self.scrapely_parser = None
@@ -131,25 +127,22 @@ class HTMLParser(BaseParser):
                 try:
                     data = lxhtml.fromstring('\n'.join(data.split('\n')[1:]))
                 except Exception:
-                    raise
+                    return False
 
-            except TypeError:
-                logging.log(logging.WARNING,
-                            'Something weird has been returned by the server.')
-                logging.log(logging.WARNING, data)
+            except TypeError as e:
                 return False
 
             except etree.XMLSyntaxError:
-                logging.log(logging.WARNING,
-                            'XML syntax parsing error:',)
                 return False
 
-            except Exception:
-                raise
+            except Exception as e:
+                logging.log(logging.WARNING, str(self) + ': Unable to use data '+
+                            'returned by URL:' + url +'\nException is: '+ str(e))
+                return False
 
             urlparsed = urlparse.urlparse(url)
             data.make_links_absolute(urlparsed.scheme + '://' + urlparsed.netloc)
-        return data
+            return data
 
     def _get_selector(self, selector):
         if selector:
@@ -166,7 +159,7 @@ class HTMLParser(BaseParser):
                         raise Exception('Not a valid css or xpath selector',
                                         selector)
 
-    def _fallback(self, template, html, source):
+    def _fallback(self, model, html, source):
         if not self.scrapely_parser:
             self.scrapely_parser = Scraper()
 
@@ -179,7 +172,7 @@ class HTMLParser(BaseParser):
             attr_dicts = self.scrapely_parser.scrape_page(html)
 
             for attr_dict in attr_dicts:
-                objct = template._replicate(name=template.name, url=source.url)
+                objct = model._replicate(name=model.name, url=source.url)
                 # Add the parsed values.
                 objct.attrs_from_dict(attr_dict)
                 yield objct
@@ -190,7 +183,8 @@ class HTMLParser(BaseParser):
         return partial(self._custom_func, selector=selector, function=function)
 
     def _custom_func(self, url, data, selector=None, function=None):
-        return function(element)
+        for element in self._select(url, data, selector):
+            yield function(element)
 
     @add_other_doc(BaseParser._text)
     def text(self, selector=None, all_text=True, **kwargs):
@@ -199,11 +193,13 @@ class HTMLParser(BaseParser):
 
     def _text(self, url, data, selector=None, all_text=True, **kwargs):
         for element in self._select(url, data, selector):
-            if type(element) != str:
+            if type(element) in (lxhtml.HtmlElement, lxhtml.FormElement):
                 if all_text:
                     text = element.text_content()
                 else:
                     text = element.text
+            elif type(element) == etree._Element:
+                text = element.text
             else:
                 text = element
             yield self._modify_text(text, **kwargs)
@@ -231,13 +227,8 @@ class HTMLParser(BaseParser):
 
     def _table(self, url, data, selector=None):
         for element in self._select(url, data, selector):
-            table_headers = [header.text_content() for header in
-                             element.cssselect('th')]
-            columns = len(table_headers)
-            table_elements = [cell.text_content() for cell in
-                              element.cssselect('td')]
-            rows = list(zip(*[iter(table_elements)]*columns))
-            yield rows
+            for row in element.cssselect('tr'):
+                yield [cell.text_content() for cell in row.cssselect('td')]
 
     #@add_other_doc(BaseParser._modify_text)
     def attr(self, selector=None, attr: str='', **kwargs):
@@ -301,6 +292,23 @@ class HTMLParser(BaseParser):
                 if var_type:
                     yield list(map(var_type, array_string[0].split(',')))
                 yield array_string[0].split(',')
+            else:
+                yield False
+
+    def pagination(self, selector=None, per_page=10, url_template='{}'):
+        selector = self._get_selector(selector)
+        return partial(self._pagination, selector=selector,
+                       per_page=per_page, url_template=url_template)
+
+    def _pagination(self, url, data, selector=None, per_page=None,
+                    url_template=None):
+        elements = list(self._select(url, data, selector))
+        if elements:
+            num_results = self._modify_text(url, elements[0].text, numbers=True)
+            for i in range(1, int(int(num_results) / per_page)):
+                yield url_template.format(i)
+        else:
+            yield False
 
     def fill_form(self, elements, fields={}, attrs=[]):
         from .sources import WebSource
@@ -315,10 +323,20 @@ class HTMLParser(BaseParser):
             self.parent._add_source(source)
 
 class JSONParser(HTMLParser):
+    name = 'JSONParser'
     def _convert_data(self, url, data):
-        xml = xmljson.badgerfish.etree(json.loads(data),
-                                       root=etree.Element('root'))
-        return xml
+        if type(data) in self.data_types:
+            return data
+        else:
+            try:
+                loaded_json = json.loads(data)
+            except Exception as E:
+                logger.log(logging.WARNING, self.name + ' data from ' + url +
+                           ' could not be loaded as json')
+                return False
+            xml = xmljson.badgerfish.etree(loaded_json,
+                                           root=etree.Element('root'))
+            return xml
 
     def dict(self, selector=None):
         selector = self._get_selector(selector)
@@ -329,37 +347,53 @@ class JSONParser(HTMLParser):
             yield {child.tag: child.text for child in element.getchildren()}
 
 
+
 class TextParser(BaseParser):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
 
     def _convert_data(self, url, data):
+        if type(data) != str:
+            try:
+                data = str(data)
+            except Exception as E:
+                loggin.log(logging.WARNING, str(self) +
+                           ':Unable to convert data for this url ' + str(url))
+                data = ''
         return data
 
     def _select(self, url, data, selector):
         data = self._convert_data(url, data)
-        if selector:
-            return data.split(selector)
-        return data
+        if data:
+            if selector:
+                return data.split(selector)
+            return [data]
+        return []
 
     def _get_selector(self, selector):
         return selector
 
 
 class CSVParser(BaseParser):
-    def __init__(self, **kwargs):
+    data_types = (list, tuple)
+    def __init__(self, delimiter=',', **kwargs):
         super().__init__(**kwargs)
+        self.delimiter = delimiter
 
     def _convert_data(self, url, data):
-        return data
-
-    def _extract(self, data, selector):
-        return [d.split(',') for d in data.split('\n') if d]
+        if type(data) in self.data_types:
+            return data
+        elif type(data) == str:
+            return [d.split(',') for d in data.split('\n') if d]
+        else:
+            logging.log(WARNING, str(self) + ': The data returned is not csv' +
+                        ' url:'+ url)
+            return False
 
     def _select(self, url, data, selector):
         data = self._convert_data(url, data)
-        if selector:
-            return [data[selector]]
+        if selector and data:
+            return wrap_list(data[selector])
         return data
 
     def _get_selector(self, selector):
