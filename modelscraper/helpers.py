@@ -23,3 +23,9 @@ def add_other_doc(other_func):
             func.__doc__ = other_func.__doc__
         return func
     return _doc
+
+def get_name(instance):
+    print(instance)
+    for name, var in globals().items():
+        if var is instance:
+            return name
