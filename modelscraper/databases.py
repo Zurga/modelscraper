@@ -9,7 +9,8 @@ import sys
 import time
 import traceback
 from datetime import datetime
-from multiprocessing import Process, JoinableQueue
+from multiprocessing import Process
+from multiprocessing import JoinableQueue as Queue
 from collections import defaultdict
 
 from pymongo import MongoClient, UpdateMany
@@ -49,48 +50,47 @@ class BaseDatabaseImplementation(Process, metaclass=MetaDatabaseImplementation):
         self.in_q = parent.in_q
         self.parent = parent
         self.cache = cache
-        self.templates = None
+        self.func = getattr(self, parent.func, None)
 
     def run(self):
         while True:
             item = self.in_q.get()
 
             if item is None:
-                print('received stopping sign')
                 break
-            template, objects, urls = item
+            model, objects, urls = item
 
             # Call to the functions in this class
+            print('Storing', model.name, len(objects), self)
             try:
-                func = getattr(self, template.func, None)
-                if func:
-                    res = func(template, objects, urls, **template.kws)
+                res = self.func(model, objects, urls, **model.kws)
                 self.in_q.task_done()
             except Exception as e:
-                logging.log(logging.ERROR,
-                            'This template did not store correctly ' +
-                            str(template.name) + str(template.url) +
-                            str(e) + str(
-                                traceback.print_tb(sys.exc_info()[-1])))
+                logger.log(logging.ERROR,
+                            'Template storing error ' + str(self.name) +
+                            str(model.name) +' ' + str(e) + str(
+                                traceback.print_tb(sys.exc_info()[0]))
+                            + str(objects))
 
 
 class BaseDatabase(object):
     forbidden_chars = []
 
-    def __init__(self, db='', table=''):
+    def __init__(self, db='', table='', func='create', kwargs={}):
         assert db, "At least the database name is required"
-        self.in_q = JoinableQueue()
+        self.in_q = Queue()
         self.db = db
         self.table = table
+        self.func = func
 
     def check_forbidden_chars(self, key):
         if any(c in key for c in self.forbidden_chars):
             raise Exception(forbidden_characters.format(str(forbidden_chars),
                                                         str(key)))
 
-    def store(self, template, objects, urls):
+    def store(self, model, objects, urls):
         #pp.pprint(objects)
-        self.worker.in_q.put((template, objects, urls))
+        self.worker.in_q.put((model, objects, urls))
 
     def start(self):
         assert self.worker, "There is no worker to start"
@@ -126,14 +126,14 @@ class MongoDBWorker(BaseDatabaseImplementation):
         return getattr(self.db, self.table)
 
     #!@add_other_doc(Collection.insert_many)
-    def create(self, template, objects, urls, *args, **kwargs):
-        coll = self.get_collection(template.table)
+    def create(self, model, objects, urls, *args, **kwargs):
+        coll = self.get_collection(model.table)
         return coll.insert_many(objects, *args, **kwargs)
 
     #!@add_other_doc(Collection.bulk_write)
-    def update(self, template, objects, urls, key='', method='$set',
+    def update(self, model, objects, urls, key='', method='$set',
                upsert=True, date=False):
-        coll = self.get_collection(template.table)
+        coll = self.get_collection(model.table)
         queries = self._create_queries(key, objects)
         if date:
             date = datetime.datetime.fromtimestamp(time.time())
@@ -174,13 +174,13 @@ class ShellCommandWorker(BaseDatabaseImplementation):
     def create(self, objects):
         pass
 
-    def read(self, template):
+    def read(self, model):
         pass
 
-    def update(self, template):
+    def update(self, model):
         pass
 
-    def delete(self, template):
+    def delete(self, model):
         pass
 
 
@@ -202,57 +202,58 @@ class CSVWorker(BaseDatabaseImplementation):
     def filename(self, table):
         return '{}_{}.csv'.format(self.db, table if table else self.table)
 
-    def fieldnames(self, template):
-        return [*list(template.attrs.keys()), '_url']
+    def fieldnames(self, model):
+        return sorted([*list(model.attrs.keys()), '_url'])
 
-    def check_existing(self, template):
-        filename = self.filename(template.table)
+    def check_existing(self, model):
+        filename = self.filename(model.table)
         if path.isfile(filename):
-            self.index[filename] = self.create_index(filename)
+            return True
+        return False
 
     def create_index(self, filename):
-        index = {}
+        index = defaultdict(list)
         if path.isfile(filename):
             with open(filename) as fle:
                 reader = csv.DictReader(fle)
                 for i, row in enumerate(reader):
-                    index[row['url']] = i
+                    index[row['url']].append(i)
         return index
 
-    def create(self, template, objects, urls, **kwargs):
-        filename = self.filename(template.table)
-        if not self.index.get('filename', False):
-            self.index[filename] = self.create_index(filename)
+    # TODO fix the indexing method. Though maybe update and delete
+    # should not be supported...
+    def create(self, model, objects, urls, **kwargs):
+        filename = self.filename(model.table)
+        existing = self.check_existing(model)
         with open(filename, 'a') as fle:
             writer = csv.DictWriter(fle,
-                                    fieldnames=self.fieldnames(template))
-            writer.writeheader()
+                                    fieldnames=self.fieldnames(model))
+            if not existing:
+                writer.writeheader()
             writer.writerows(objects)
-            index = dict(enumerate((o['_url'] for o in objects)))
-            self.index[filename] = {**self.index[filename], **index}
 
     # TODO Fix this
-    def read(self, template, urls):
+    def read(self, model, urls):
         pass
 
-    def update(self, template, objects, urls):
-        filename = self.filename(template.table)
+    def update(self, model, objects, urls):
+        filename = self.filename(model.table)
         if not self.index.get('filename', False):
             self.index[filename] = self.create_index(filename)
 
         with open(filename, 'a') as fle:
             writer = csv.DictWriter(fle,
-                                    fieldnames=self.fieldnames(template))
+                                    fieldnames=self.fieldnames(model))
             writer.writerows(objects)
 
-    def delete(self, template):
+    def delete(self, model):
         pass
 
 
-def dictionary_adapter(dictionary):
+def json_adapter(dictionary):
     return json.dumps(dictionary)
 
-def dictionary_converter(s):
+def json_converter(s):
     return json.loads(s)
 
 
@@ -263,8 +264,10 @@ class Sqlite(BaseDatabase):
         super().__init__(*args, **kwargs)
         connection = sqlite3.connect(self.db + '.db',
                                      sqlite3.PARSE_DECLTYPES)
-        sqlite3.register_adapter(dict, dictionary_adapter)
-        sqlite3.register_converter('dict', dictionary_converter)
+        sqlite3.register_adapter(dict, json_adapter)
+        sqlite3.register_converter('dict', json_converter)
+        sqlite3.register_adapter(list, json_adapter)
+        sqlite3.register_converter('list', json_converter)
         self.worker = SqliteWorker(parent=self, database=connection,
                                    table=self.table)
 
@@ -272,10 +275,10 @@ class Sqlite(BaseDatabase):
 class SqliteWorker(BaseDatabaseImplementation):
     ''' A database implementation for Sqlite3.'''
 
-    template_table = '''CREATE TABLE IF NOT EXISTS {table}
+    url_table = '''CREATE TABLE IF NOT EXISTS {table}
         (id INTEGER PRIMARY KEY ASC, url TEXT);'''
 
-    template_index = 'CREATE INDEX IF NOT EXISTS urlindex ON {table} (url)'
+    url_index = 'CREATE INDEX IF NOT EXISTS urlindex ON {table} (url)'
 
     attr_table = '''CREATE TABLE IF NOT EXISTS {table}_{attr}
         (id INTEGER, value {type})'''
@@ -286,9 +289,15 @@ class SqliteWorker(BaseDatabaseImplementation):
         WHERE OLD.id = {table}_{attr}.id; END;
         '''
 
+    insert_query = "INSERT INTO {table} VALUES (?, ?);"
+
+    update_query = "UPDATE {table} SET {attr} = ? WHERE id = ?"
+
+    id_query = "SELECT url, id FROM {table} WHERE url = ?"
+
     def __init__(self, parent, database, new=False, **kwargs):
         super().__init__(parent, database, **kwargs)
-        self.template_schema = {}
+        self.model_schema = {}
         self.connections = {}
 
     def get_table(self, table):
@@ -296,20 +305,20 @@ class SqliteWorker(BaseDatabaseImplementation):
             return self.table
         return table
 
-    def create_schema(self, template):
-        attrs = template.attrs
-        table = self.get_table(template.table)
+    def create_schema(self, model):
+        attrs = model.attrs
+        table = self.get_table(model.table)
         # TODO set correct types for the attrs
-        yield self.template_table.format(table=table)
-        yield self.template_index.format(table=table)
-        yield from self.attr_schema(template, table)
+        yield self.url_table.format(table=table)
+        yield self.url_index.format(table=table)
+        yield from self.attr_schema(model, table)
 
-    def attr_schema(self, template, table):
+    def attr_schema(self, model, table):
         '''
         Creates the table definitions for each attribute of a
-        template.
+        model.
         '''
-        for attr in template.attrs:
+        for attr in model.attrs:
             if attr.type:
                 value_type = attr.type
             else:
@@ -319,51 +328,48 @@ class SqliteWorker(BaseDatabaseImplementation):
             yield self.attr_trigger.format(table=table, attr=attr.name,
                                            type=value_type)
 
-    def check_schema(self, template):
-        # Is there a schema of the template we are storing
-        if not self.template_schema.get(template.name):
-            schema = self.create_schema(template)
+    def check_schema(self, model):
+        # Is there a schema of the model we are storing
+        if not self.model_schema.get(model.name):
+            schema = self.create_schema(model)
             with self.db as connection:
                 for line in schema:
                     connection.execute(line)
-            self.template_schema[template.name] = schema
 
-    def create(self, template, objects, urls, *args, **kwargs):
-        self.check_schema(template)
-        table = self.get_table(template.table)
+            self.model_schema[model.name] = schema
 
-        query = "INSERT INTO {table} VALUES (?, ?);"
+    def create(self, model, objects, urls, *args, **kwargs):
+        self.check_schema(model)
+        table = self.get_table(model.table)
 
         with self.db as con:
-            # By inserting NULL into the id column SQLITE will create the id.
+            # OLD WAY
             values = list(zip([None] * len(urls), urls))
-            con.executemany(query.format(table=table), values)
+            con.executemany(self.insert_query.format(table=table), values)
 
             # We select all the ids that were inserted to create the attrs
             urls_ids = dict(self.urls_ids(table, urls))
 
-            for attr in template.attrs.keys():
+            for attr in model.attrs.keys():
                 table_name = '_'.join((table, attr))
 
                 for obj, url in zip(objects, urls):
                     db_id = urls_ids[url]
                     for value in obj[attr]:
-                        con.execute(query.format(table=table_name), (db_id, value))
+                        con.execute(self.insert_query.format(table=table_name),
+                                    (db_id, value))
 
     def urls_ids(self, table, urls):
-        id_query = """ SELECT url, id FROM {table} WHERE url =
-        ?""".format(table=table)
+        id_query = self.id_query.format(table=table)
         urls_ids = []
         with self.db as con:
             for url in urls:
                 urls_ids.extend(con.execute(id_query, (url,)).fetchall())
         return urls_ids
 
-    def update(self, template, objects, urls, *args, **kwargs):
-        self.check_schema(template)
-        table = self.get_table(template.table)
-
-        query = "UPDATE {} SET {} = ? WHERE id = ?"
+    def update(self, model, objects, urls, *args, **kwargs):
+        self.check_schema(model)
+        table = self.get_table(model.table)
 
         for (url, i) in self.urls_ids(table, urls):
             obj_idx = urls.index(url)
@@ -374,18 +380,18 @@ class SqliteWorker(BaseDatabaseImplementation):
                 for value in obj[attr]:
                     con.execute(query.format(table_name, attr), (value, i))
 
-    def delete(self, template, objects, urls, *args, **kwargs):
-        self.check_schema(template)
-        table = self.get_table(template.table)
+    def delete(self, model, objects, urls, *args, **kwargs):
+        self.check_schema(model)
+        table = self.get_table(model.table)
         urls_ids = dict(self.urls_ids(table, urls))
         delete_query = 'DELETE FROM {table} WHERE id = ?'
-        with self.connect(template) as con:
+        with self.connect(model) as con:
             for url in urls:
                 db_id = urls_ids[url]
                 con.execute(delete_query.format(table), (db_id,))
 
     #TODO fix this method
-    def read(self, template, urls, *args, **kwargs):
+    def read(self, model, urls, *args, **kwargs):
         pass
 
 
@@ -410,19 +416,19 @@ class FileWorker(BaseDatabaseImplementation):
             os.makedirs(full_path)
         return full_path
 
-    def create(self, template, objects, urls, **kwargs):
-        path = self.get_path(template.table)
+    def create(self, model, objects, urls, **kwargs):
+        path = self.get_path(model.table)
         for objct in objects:
             filename = path + '/' + objct['_url'].split('/')[-1]
             with open(filename, 'w') as fle:
                 fle.write(str(objct))
 
-    def update(self, template, objects, urls, **kwargs):
+    def update(self, model, objects, urls, **kwargs):
         pass
 
-    def delete(self, template, objects, urls, **kwargs):
+    def delete(self, model, objects, urls, **kwargs):
         pass
 
-    def read(self, template, objects, urls, **kwargs):
+    def read(self, model, objects, urls, **kwargs):
         pass
 
