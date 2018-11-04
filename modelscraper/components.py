@@ -1,21 +1,22 @@
 from collections import defaultdict, ChainMap
+from copy import copy
 from datetime import datetime
 from itertools import zip_longest, chain
 from functools import partial
 from threading import BoundedSemaphore
-from multiprocessing import Process, JoinableQueue
-from queue import Empty
+from queue import Empty, Queue
 from threading import Lock
 
+import inspect
 import logging
 import pprint
-import inspect
+import re
 import types
 
 from pybloom_live import ScalableBloomFilter
 
 from .parsers import HTMLParser
-from .helpers import str_as_tuple, wrap_list
+from .helpers import str_as_tuple, wrap_list, get_name
 from . import databases
 
 
@@ -31,15 +32,30 @@ class BaseComponent(object):
     Attributes
     ==========
     emits : Source, optional
+        This is the Source into which new urls will be submitted from either an
+        Attr on from a Template. In the case of an Attr, each value found by the
+        func specified will be used as an URL. Every other Attr in the Template is
+        available when the URL is passed to the Source. This also means that certain
+        values can be inserted in the keyword arguments which are available for the
+        different Sources.
+
+
     kws : dict or list of dict, optional
         These are the keywords that will be passed to the 'func'
         attribute. If multiple funcs are given, the
     name : string, optional
-        The name given used in by the parser for this Template or attribute.
-    selector : Test
+        Used to register the Attr in the Template or the Template in the  Scraper.
+        If none is provided, the variable name given in the model definition
+        will be used.
     """
 
-    def __init__(self, emits=None, kws={}, name=None, selector=None):
+    def __init__(self, name='', emits=None):
+        if not name:
+            name = get_name(self)
+            assert name, "Please specify a name or assign to a variable."
+        self.name = name
+        '''
+        '''
         self.emits = emits
         '''
         An instance of a Source which will be used to get the new data.
@@ -47,20 +63,6 @@ class BaseComponent(object):
         the class it is used in, see the respective classes for their
         respective uses.
         '''
-        self.name = name
-        '''
-        The name which will be used to print and register the object in the
-        Template or Scraper
-        '''
-        self.selector = wrap_list(selector)
-        '''
-        A selector which will be used to gather the information to which the
-        template is applied.
-        '''
-        self.kws = wrap_list(kws)
-
-    def _replicate(self, **kwargs):
-        return self.__class__(**kwargs)
 
     def __call__(self, **kwargs):
         parameters = inspect.signature(self.__init__).parameters
@@ -73,40 +75,75 @@ class BaseComponent(object):
 
 
 class Source(object):
+    '''
+    Attributes
+    ==========
+    name : string, optional
+        Used for logging purposes.
+
+    attrs : list of dict, dict, optional
+        The keys and values in the attrs will be passed to each object created
+        while parsing the data which came from this source. If a single dict is
+        passed, all the objects will have the same keys and values applied.
+
+        If a list is passed with the same length as the urls, the urls and attrs
+        will be zipped. I.E. each object from a specific URL will have specific
+        attrs.
+
+    url_template : string, optional
+        A string which can be formatted using the "str.format" notation. Whatever
+        is used as URL will be placed inside the "{}".
+        I.E. url_template = 'https://duckduckgo.com/q={}'
+
+    urls : list of strings, optional
+        A list of URLs from which data is to be retrieved.
+
+    test_urls : list of strings, optional
+        A list of URLs which will be used when the ":Scraper.dummy:" parameter
+        is set to True.
+
+    n_workers : int, optional
+        The amount of workers (or Threads) used by the workers of the Source
+
+    compression : string, optional
+        The compression type used for the data retrieved from each URL. At the
+        moment only Zip and Gzip are supported
+
+    kwargs_format : dict, optional
+        A mapping
+    '''
     kwargs = []
-    def __init__(self, name='', kws={}, attrs=[], url_template='{}',
+    def __init__(self, name='', attrs=[], url_template='{}', url_regex='',
                  urls=[], func='', test_urls=[], n_workers=1, compression='',
-                 kwargs_format={}, duplicate=False, repeat=False,
-                 wait=False):
+                 kwargs_format={}, duplicate=False):
         self.attrs = attrs
         self.compression = compression
         self.duplicate = duplicate
         self.func = func
         self.kwargs_format = kwargs_format
-        self.kws = kws
         self.n_workers = n_workers
-        self.name = name
-        self.repeat = repeat
+        self.test_urls = str_as_tuple(test_urls)
         self.url_template = url_template
         self.urls = urls
 
+        # Compile the url_regex
+        self.url_regex = re.compile(url_regex).search if url_regex else False
+
+        if not name:
+            name = get_name(self)
+        self.name = name
+
         self._backup_sources = None
         self._semaphore = BoundedSemaphore(self.n_workers)
-        self.in_q = JoinableQueue()
+        self.in_q = Queue()
         self.lock = Lock()
-        self.out_q = JoinableQueue()
+        self.out_q = Queue()
         self.seen = ScalableBloomFilter()
-        self.test_urls = str_as_tuple(test_urls)
         self.to_parse = 0
         self.upstream_sources = []
         self.url_amount = int((self.n_workers / 2) + 10)
         self.url_attrs = defaultdict(dict)
-        self.wait = wait
-
-        if not self.urls or wait:
-            self.received = False
-        else:
-            self.received = True
+        self.models = []
 
     @property
     def semaphore(self):
@@ -118,7 +155,6 @@ class Source(object):
             self._semaphore = semaphore
         else:
             self._semaphore = BoundedSemaphore(self.n_workers)
-        self.initialize_workers()
 
     def register_upstream_source(self, source):
         if self != source and source not in self.upstream_sources:
@@ -137,7 +173,7 @@ class Source(object):
     def retrieving(self):
         return any(w.retrieving for w in self.workers)
 
-    def initialize_workers(self):
+    def start(self):
         self.workers = [
             self.source_worker(parent=self, id=1, in_q=self.in_q,
                                out_q=self.out_q, semaphore=self._semaphore,
@@ -193,7 +229,7 @@ class Source(object):
         print('Source.stop stopped', self.name)
 
     def consume(self):
-        if self.urls and not self.wait:
+        if self.urls:
             for _ in range(self.url_amount):
                 if type(self.urls) is list:
                     try:
@@ -208,8 +244,11 @@ class Source(object):
                         self.urls = False
                         break
 
-                if self.attrs and type(self.attrs) is list:
-                    attrs = self.attrs.pop()
+                if self.attrs:
+                    if type(self.attrs) is list:
+                        attrs = self.attrs.pop()
+                    elif type(self.attrs) is dict:
+                        attrs = self.attrs
                 else:
                     attrs = {}
 
@@ -225,10 +264,10 @@ class Source(object):
         self.seen.add(url)
 
     def add_source(self, url, attrs, objct={}):
-        self.received = True
-        self.wait = False
         url = self.url_template.format(url)
-        if (url not in self.seen or self.repeat) or self.duplicate:
+        if url not in self.seen or self.duplicate:
+            if self.url_regex and not self.url_regex(url):
+                return False
             kwargs = self.get_kwargs(objct)
             self.url_attrs[url] = attrs
             self.in_q.put((url, kwargs))
@@ -238,12 +277,12 @@ class Source(object):
     def get_kwargs(self, objct=None):
         kwargs = {}
         for key in self.kwargs:
-            value = getattr(self, key)
-            if value:
+            kwarg = getattr(self, key)
+            if kwarg:
                 # If the kwargs are in a list or generator, we get the next
                 # value.
-                if type(value) is list:
-                    value = value.pop(0)
+                if type(kwarg) is list:
+                    value = kwarg.pop(0)
                 elif type(value) is types.GeneratorType:
                     try:
                         value = next(value)
@@ -253,7 +292,7 @@ class Source(object):
                 # Format the value for the keyword argument based on an object
                 # that was passed.
                 if objct and key in self.kwargs_format and type(value) is str:
-                    value = value.format(**{k:objct[k] for k in
+                    value = value.format(**{k: objct[k] for k in
                                             self.kwargs_format[key]})
 
                 kwargs[key] = value
@@ -270,45 +309,76 @@ class Source(object):
         if self._backup_sources:
             self.urls = self._backup_sources
 
+    def get_attr_names(self, caller=None):
+        if self.attrs:
+            attrs_copy = copy(self.attrs)
+            if type(attrs_copy) in (list, types.GeneratorType):
+                for attr in attrs_copy:
+                    for name in attr.keys():
+                        yield name
+            elif type(attrs_copy) == dict:
+                for name in attrs_copy.keys():
+                    yield name
+
+    def register_model(self, model):
+        if model not in self.models:
+            self.models.append(model)
+
 
 class Attr(BaseComponent):
     '''
-    An Attr is used to hold a value for a template.
+    An Attr is used to hold a value for a model.
     This value is created by selecting data from the source using the selector,
     after which the "func" is called on the selected data.
+
+    func : method or list of methods, optional
+        One or multiple methods provided by a Parser. If a list is given, the data
+        from one method is passed onto another. The methods can be from different
+        parsers, the data will be converted by the parser.
+        For example, a combination of these two methods will allow for the
+        selection of JSON which is embedded in HTML like this:
+        <span>{"test": "value"}</span>
+
+        htmlp = HTMLParser()
+        jsonp = JSONParser()
+        nested_json = Attr(name='nested', func=[htmlp.text(selector='span'),
+                                                jsonp.text(selector='test')])
+
+
+    transfers : bool, default False
+        This determines whether the Attr will be copied as a name: value pair to the
+        source which another Attr might be emitting into.
+        Consider the following example where an image url scraped with the category
+        attribute from the same model by setting the 'transfers' parameter to True on         the category attribute:
+
+        htmlp = HTMLParser()
+        image_list_source = WebSource()
+        image_source = WebSource()
+
+        image_url = Attr(func=htmlp.attr(selector='img', attr='src'),
+                         emits=image_source)
+        category = Attr(func=htmlp.text(selector='span.category'),
+                        transfers=True)
+
+        model = Model(source=image_list_source, attrs=[domain, url])
+
+        The objects that are generated from the data in the image_source will
+        now also have a category attribute set to whatever value was gotten from
+        the image_list_source.
     '''
-    def __init__(self, func=None, value=None, attr_condition={},
-                 source_condition={}, type=None, arity=1, from_source=False,
-                 transfers=False, stores=True, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+    def __init__(self, name='', func=None, value=None,
+                 attr_condition={}, source_condition={}, from_source=False,
+                 type=None, transfers=False, *args, **kwargs):
+        super().__init__(name=name, *args, **kwargs)
+        assert (from_source and not self.emits) or not from_source, \
+            "If the attr is coming from a source, it cannot emit into another source"
         self.func = wrap_list(func)
         self.value = wrap_list(value)
         self.attr_condition = attr_condition
         self.source_condition = source_condition
         self.type = type
-        self.arity = arity
         self.from_source = from_source
         self.transfers = transfers
-        self.stores = True
-
-        # Ensure that the kws are encapsulated in a list with the same length
-        # as the funcs.
-        '''
-        if self.func:
-            self.kws = wrap_list(self.kws)
-            difference = len(self.func) - len(self.kws)
-            if difference:
-                self.kws = [*self.kws, *[{} for _ in range(difference)]]
-        '''
-
-    def __call__(self, **kwargs):
-        new_kws = kwargs.get('kws', {})
-        if new_kws:
-            new_kws = wrap_list(new_kws)
-            kwargs['kws'] = [{**old, **new} for new, old in
-                            zip_longest(new_kws, self.kws, fillvalue={})]
-        # TODO maybe a ChainMap here?
-        return self.__class__(**{**self.__dict__, **kwargs})  # noqa
 
     def __getstate__(self):
         state = {}
@@ -318,12 +388,6 @@ class Attr(BaseComponent):
 
     def __setstate__(self, state):
         self.__dict__.update(state)
-
-    def set_name(self):
-        for name, var in globals().items():
-            if self == var:
-                print(name, var)
-                self.name = name
 
     def _evaluate_condition(self, objct):
         # TODO fix this ugly bit of code
@@ -356,75 +420,84 @@ def attr_dict(attrs):
     return attrs_dict
 
 
-class Template(BaseComponent):
-    def __init__(self, attrs=[], dated=False, database=[], func='create',
-                 parser=HTMLParser, preparser=None, required=False,
-                 source=None, table='', url='', overwrite=True, *args, **kwargs):
+class Model(BaseComponent):
+    def __init__(self, attrs=[], dated=False, database=[], preparser=None,
+                 required=False, selector=None, source=None, table='',
+                 kws={}, overwrite=True, definition=False, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.attrs = attr_dict(attrs)
         self.dated = dated
         self.database = wrap_list(database)
-        self.func = func
-        self.parser = wrap_list(parser)
+        self.kws = kws
         self.preparser = preparser
         self.required = required
+        self.selector = wrap_list(selector)
         self.source = wrap_list(source)
         self.table = table
-        self.url = url
         self.overwrite = overwrite
+        self.definition = definition
 
         # Get the urls of the objects that have already been parsed to avoid
         # overwriting them.
-        if not self.overwrite:
-            for db in self.database:
-                for obj in db.read(self):
-                    self.source.add_to_seen(obj.get('url'))
+        if dated:
+            self.attrs['_date'] = Attr(name='_date')
 
-        if self.url:
-            self.attrs['url'] = Attr(name='url', value=self.url)
+        if not definition:
+            if not self.overwrite:
+                for db in self.database:
+                    for obj in db.read(self):
+                        self.source.add_to_seen(obj.get('url'))
 
-        self.emit_attrs = [attr for attr in self.attrs
-                           if attr.emits]
+            self.emit_attrs = [attr for attr in self.attrs
+                               if attr.emits]
 
-        # Register the upstream sources for each source that expects something.
-        for attr in self.emit_attrs:
-            for source in self.source:
-                attr.emits.register_upstream_source(source)
+            if not self.emits:
+                self.transfers = [attr.name for attr in self.attrs
+                                  if attr.transfers]
+            else:
+                self.transfers = self.attrs.keys()
 
-        if self.emits:
-            for source in self.source:
-                self.emits.register_upstream_source(source)
+            self.func_attrs = [attr for attr in self.attrs
+                               if attr.func]
+            self.value_attrs = [attr for attr in self.attrs
+                                if attr.value]
 
-        self.transfers = [attr.name for attr in self.attrs
-                          if attr.transfers]
-        self.func_attrs = [attr for attr in self.attrs
-                           if attr.func]
-        self.value_attrs = [attr for attr in self.attrs
-                            if attr.value]
+            if 'url' not in self.attrs:
+                self.attrs['url'] = Attr(name='url')
 
-    def validate(self):
-        # Validate the functions of the attrs
-        for parser in self.parser:
-            for attr in self.attrs:
-                for database in self.database:
-                    database.check_forbidden_chars(attr.name)
-        if not self.table:
-            for database in self.database:
-                if not database.table:
-                    raise Exception(str(self.name) +
-                                    ' template needs a table to be set')
 
-    def attrs_to_dict(self):
-        return {a.name: a.value for a in self.attrs}
+    def __call__(self, definition=False, attrs=[], *args, **kwargs):
+        # Check if the same attrs are being used as in the definition
+        if self.definition:
+            for attr in attrs:
+                if attr.name not in self.attrs:
+                    print('Missing', attr.name, 'in the implementation')
+                    raise Exception('You must use the same attrs when ' + \
+                                    'implementing a definition')
+        return super().__call__(definition=definition, attrs=attrs, *args,
+                                **kwargs)
 
     def __getstate__(self):
-        pickled = ['attrs', 'table', 'func', 'kws',
-                   'name', 'url', ]
+        pickled = ['attrs', 'table', 'kws', 'name', ]
         dic = {p: self.__dict__[p] for p in pickled}
         return dic
 
     def __setstate__(self, state):
         self.__dict__.update(state)
+
+    def validate(self):
+        # Validate the functions of the attrs
+        for attr in self.attrs:
+            for database in self.database:
+                database.check_forbidden_chars(attr.name)
+        if not self.table:
+            for database in self.database:
+                if not database.table:
+                    raise Exception(str(self.name) +
+                                    ' model needs a table to be set')
+
+    def attrs_to_dict(self):
+        return {a.name: a.value for a in self.attrs}
 
     def gen_source(self, objects):
         for attr in self.emit_attrs:
@@ -434,23 +507,25 @@ class Template(BaseComponent):
                 for objct in objects:
                     attrs = {'_url': objct['_url']}
                     for value in objct[attr.name]:
-                        source = attr.emits.get(value)
-                        if source:
-                            source.add_source(objct['_url'], attrs, objct)
+                        if value:
+                            source = attr.emits.get(value)
+                            if source:
+                                source.add_source(objct['_url'], attrs, objct)
             else:
                 for objct in objects:
                     if attr._evaluate_condition(objct):
                         for url in objct[attr.name]:
-                            attrs = {key: objct[key] for key in self.transfers}
-                            attrs['_url'] = objct['_url']
-                            attr.emits.add_source(url, attrs, objct)
+                            if url:
+                                attrs = {key: objct[key] for key in self.transfers}
+                                attrs['_url'] = objct['_url']
+                                attr.emits.add_source(url, attrs, objct)
 
         if self.emits:
             for objct in objects:
                 urls = objct.get('url', False)
                 if urls:
                     for url in urls:
-                        self.emits.add_source(url, {}, objct)
+                        self.emits.add_source(url, objct, objct)
                 else:
                     warning = 'No url is specified for object {}. Cannot emit source.'
                     logging.warning(warning.format(self.name))
@@ -475,22 +550,25 @@ class Template(BaseComponent):
 
             no_value = 0
             for attr in self.func_attrs:
-                value = data
-                try:
-                    for func in attr.func:
-                        value = func(url, value)
-                    obj[attr.name] = list(value)
-                except Exception as E:
-                    print(attr.name, attr.func)
+                value = [data]
+                #try:
+                for func in attr.func:
+                    value = [result for v in value for result in func(url, v)]
+                obj[attr.name] = value
+                #except Exception as E:
+                #    print(self.name, E)
+                #    print(attr.name, attr.func)
 
             for attr in self.value_attrs:
                 obj[attr.name] = attr.value
+
+            if not 'url' in obj:
+                obj['url'] = [obj['_url']]
 
             urls.extend(obj.get('url', []))
             if self.dated:
                 obj['_date'] = str(datetime.now())
             objects.append(obj)
-
         return objects, urls
 
     def store_objects(self, objects, urls):
@@ -509,15 +587,15 @@ class Template(BaseComponent):
 
 
 class Scraper(object):
-    def __init__(self, name='', templates=[], num_sources=1, awaiting=False,
+    def __init__(self, name='', models=[], num_sources=1, awaiting=False,
                  schedule='', logfile='', dummy=False, recurring=[], **kwargs):
         super().__init__()
         self.name = name
-        self.templates = templates
+        self.models = models
         self.num_sources = num_sources
         self.awaiting = awaiting
         self.schedule = schedule
-        self.sources = {}
+        self.sources = set()
         self.recurring = recurring
         self._dummy = dummy
 
@@ -527,19 +605,27 @@ class Scraper(object):
         else:
             logging.basicConfig(level=logging.WARNING)
         self.databases, parsers = set(), set()
-        self.sources_templates = defaultdict(list)
 
         # Populate lists of the databases used, the parsers and the sources
-        for template in self.templates:
-            template.validate()
-            for source in template.source:
-                self.sources_templates[source].append(template)
-            for db in template.database:
+        for model in self.models:
+            model.validate()
+            for source in model.source:
+                source.register_model(model)
+                if model.emits:
+                        model.emits.register_upstream_source(source)
+                self.sources.add(source)
+
+            # Register the upstream sources for each source that expects something.
+            for attr in model.emit_attrs:
+                for source in model.source:
+                    attr.emits.register_upstream_source(source)
+
+            for db in model.database:
                 self.databases.add(db)
 
         # Restrict the amount of source workers working at the same time.
         self.semaphore = BoundedSemaphore(self.num_sources)
-        for source in self.sources_templates:
+        for source in self.sources:
             source.semaphore = self.semaphore
 
         self.validate()
@@ -551,10 +637,30 @@ class Scraper(object):
         one Template.
         """
         unused_source = "The attr {} emits a source which is not used by any Template"
-        for template in self.templates:
-            for attr in template.emit_attrs:
-                assert attr.emits in self.sources_templates,\
+        for model in self.models:
+            for attr in model.emit_attrs:
+                assert attr.emits in self.sources,\
                     unused_source.format(attr.name)
+
+        upstream_attrs = defaultdict(set)
+
+        for model in self.models:
+            sources = []
+            sources.extend(model.source)
+            while sources:
+                source = sources.pop()
+                for name in source.get_attr_names():
+                    upstream_attrs[model].add(name)
+                for upstream_model in source.models:
+                    for name in upstream_model.transfers:
+                        upstream_attrs[model].add(name)
+                    sources.extend(source.upstream_sources)
+
+        for model, attrs in upstream_attrs.items():
+            for attr in attrs:
+                if attr not in model.attrs:
+                    print('This attr should be added to the model',
+                          model.name, attr)
 
     @property
     def dummy(self):
@@ -564,11 +670,11 @@ class Scraper(object):
     def dummy(self, value):
         if value:
             self._dummy = value
-            for source in self.sources_templates:
+            for source in self.sources:
                 source.use_test_urls()
                 # Backup the urls of the source in a different attribute
         else:
-            for source in self.sources_templates:
+            for source in self.sources:
                 source.restore_urls()
 
     def start(self):
@@ -577,30 +683,33 @@ class Scraper(object):
         Every iteration processes the data retrieved from one url for each Source.
         '''
         self.start_databases()
-        while self.sources_templates:
+        self.start_sources()
+        while self.sources:
             empty = []
-            for source, templates in self.sources_templates.items():
+            for source in self.sources:
                 res = source.get_source()
                 if res:
                     url, attrs, data = res
-                    for template in templates:
-                        objects, urls = template.parse(url, attrs, data)
-                        #pp.pprint(objects)
+                    for model in source.models:
+                        objects, urls = model.parse(url, attrs, data)
                         if objects:
-                            print(source.name, len(objects))
-                            template.store_objects(objects, urls)
-                            template.gen_source(objects)
+                            print('Parsed', source.name, len(objects))
+                            model.store_objects(objects, urls)
+                            model.gen_source(objects)
                         else:
                             print('no objects', url)
                 elif res == False:
-                    logging.log(logging.INFO, 'stopping' + source.name)
+                    logging.log(logging.INFO, 'stopping' + str(source.name))
                     empty.append(source)
                 else:
                     continue
             for source in empty:
-                source = self.sources_templates.pop(source)
-                del source
+                self.sources.discard(source)
         self.kill_databases()
+
+    def start_sources(self):
+        for source in self.sources:
+            source.start()
 
     def start_databases(self):
         for db in self.databases:
@@ -610,19 +719,10 @@ class Scraper(object):
         for db in self.databases:
             db.stop()
 
-    def get_template(self, template):
-        if type(template) is Template:
-            key = template.name
-        elif type(template) is str:
-            key = template
-        for template in self.templates:
-            if template.name == key:
-                return template
-
     def __repr__(self):
         repr_string = self.name + ':\n'
-        for template in self.templates:
-            repr_string += '\t{}\n'.format(template.name)
+        for model in self.models:
+            repr_string += '\t{}\n'.format(model.name)
         return repr_string
 
     # TODO fix this method
