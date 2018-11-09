@@ -6,7 +6,7 @@ The advantage of this is that scrapers don't have to be written specifically for
 
 Example that will scrape the search results from DuckDuckGo with the query "example":
 
-<code>
+```python
 from modelscraper.components import Template, Attr, Scraper
 from modelscraper.sources import WebSource
 from modelscraper.databases import CSV
@@ -46,5 +46,5 @@ next_page = Template(
 
 scraper = Scraper(templates=[search_result, next_page])
 scraper.start()
-</code>
+```
 To explain what is going on here I need to introduce some concepts
