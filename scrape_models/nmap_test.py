@@ -1,10 +1,14 @@
-from modelscraper.dispatcher import Dispatcher
-from modelscraper.components import ScrapeModel, Phase, Template, Attr, Source
+from modelscraper.components import Scraper, Model, Attr
 from modelscraper.sources import ProgramSource
+from modelscraper.databases import MongoDB
 
 
-port_template = Template(
-    name='ports', selector='port', db_type='MongoDB', db='ports',
+nmap_source = ProgramSource(urls=['localhost'], func='nmap -oX - {}')
+
+port_template = Model(
+    source=nmap_source,
+    name='ports', selector='port',
+    database=MongoDB('nmap'),
     table='ports', attrs=(
     Attr(name='portnumber', func='sel_attr',
          kws={'attr': 'portid'}),
@@ -12,10 +16,4 @@ port_template = Template(
          kws={'attr': 'state'}),
     Attr(name='service', selector='service', func='sel_attr',
          kws={'attr': 'name'})))
-nmap = ScrapeModel(name='nmap_test', domain='', phases=[
-    Phase(sources=(Source(url='nmap -oX - duwo.multiposs.nl'),),
-        templates=[port_template], source_worker=ProgramSource)])
-
-disp = Dispatcher()
-disp.add_scraper(nmap)
-disp.run()
+nmap = Scraper(name='nmap_test', models=[port_template])

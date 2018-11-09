@@ -61,7 +61,6 @@ class BaseDatabaseImplementation(Process, metaclass=MetaDatabaseImplementation):
             model, objects, urls = item
 
             # Call to the functions in this class
-            print('Storing', model.name, len(objects), self)
             try:
                 res = self.func(model, objects, urls, **model.kws)
                 self.in_q.task_done()
