@@ -303,7 +303,7 @@ class Source(object):
             self._backup_sources = copy(self.urls)
         else:
             self._backup_sources = self.urls
-        self.urls = self.test_urls if hasattr(self, 'test_urls') else []
+        self.urls = self.test_urls if hasattr(self, 'test_urls') else self.urls
 
     def restore_urls(self):
         if self._backup_sources:
@@ -696,6 +696,8 @@ class Scraper(object):
                             print('Parsed', source.name, len(objects))
                             model.store_objects(objects, urls)
                             model.gen_source(objects)
+                            if self.dummy:
+                                pp.pprint(objects)
                         else:
                             print('no objects', url)
                 elif res == False:
