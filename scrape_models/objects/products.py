@@ -1,37 +1,18 @@
-from modelscraper.components import Template, Attr
+from modelscraper.components import Attr, Model
 
-product_name = Attr(
-    name='product_name',
-    func='sel_text')
+product_name = Attr(name='product_name')
+price = Attr(name='price')
+nutrition = Attr(name='nutrition')
+brand_name = Attr(name='brand_name')
+unitsize = Attr(name='unitsize')
+availability = Attr(name='availability')
+store_id = Attr(name='store_id')
+category = Attr(name='category')
+ingredients = Attr(name='ingredients')
+url = Attr(name='url')
 
-price = Attr(
-    name='price',
-    func='sel_text')
-
-nutrition = Attr(
-    name='nutrition',
-    func='sel_table')
-
-brand_name = Attr(
-    name='brand_name',
-    func='sel_text')
-
-unitsize = Attr(
-    name='unitsize',
-    func='sel_text')
-
-availability = Attr(
-    name='availability',
-    func='sel_text')
-
-store_id = Attr(
-    name='store_id',
-    func='sel_text')
-
-category = Attr(
-    name='category',
-    func='sel_text')
-
-ingredients = Attr(
-    name='ingredients',
-    func='sel_text')
+product = Model(
+    name='product',
+    definition=True,
+    attrs=[url, product_name, price, nutrition, brand_name, unitsize, availability,
+           store_id, category, ingredients])
