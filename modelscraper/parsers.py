@@ -30,15 +30,18 @@ class BaseParser(object):
     def _convert_data(self, source):
         raise NotImplementedError()
 
-    def select(self, selector=None):
+    def select(self, selector=None, debug=False):
         selector = self._get_selector(selector)
-        return partial(self._select, selector=selector)
+        return partial(self._select, selector=selector, debug=debug)
 
-    def _select(self, url, data, selector=None):
+    def _select(self, url, data, selector=None, debug=False):
         data = self._convert_data(url, data)
         if data is not False:
             if selector:
-                return selector(data)
+                selected = selector(data)
+                if debug:
+                    print(selected)
+                return selected
             return (data,)
         return []
 
@@ -290,7 +293,7 @@ class HTMLParser(BaseParser):
     def _js_array(self, url, data, selector=None, var_name='', var_type=None):
         var_regex = 'var\s*'+var_name+'\s*=\s*(?:new Array\(|\[)(.*)(?:\)|\]);'
         for element in self._select(url, data, selector):
-            array_string = list(self._modify_text(url, element.text, regex=var_regex))
+            array_string = list(self._modify_text(element.text, regex=var_regex))
             if array_string:
                 if var_type:
                     yield list(map(var_type, array_string[0].split(',')))
@@ -298,18 +301,22 @@ class HTMLParser(BaseParser):
             else:
                 yield False
 
-    def pagination(self, selector=None, per_page=10, url_template='{}'):
+    def pagination(self, selector=None, per_page=10, url_template='{}', debug=False):
         selector = self._get_selector(selector)
         return partial(self._pagination, selector=selector,
-                       per_page=per_page, url_template=url_template)
+                       per_page=per_page, url_template=url_template,
+                       debug=debug)
 
     def _pagination(self, url, data, selector=None, per_page=None,
-                    url_template=None):
+                    url_template=None, debug=False):
         elements = list(self._select(url, data, selector))
         if elements:
-            num_results = self._modify_text(url, elements[0].text, numbers=True)
+            num_results = self._modify_text(elements[0].text, numbers=True)
             for i in range(1, int(int(num_results) / per_page)):
-                yield url_template.format(i)
+                formatted = url_template.format(i)
+                if debug:
+                    print(formatted)
+                yield formatted
         else:
             yield False
 
