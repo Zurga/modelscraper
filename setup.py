@@ -1,7 +1,7 @@
 from setuptools import setup
 
 with open('requirements.txt') as fle:
-    dependencies = fle.readlines()
+    dependencies = [line for line in fle.readlines() if not line.startswith('git')]
 
 setup(name='modelscraper',
       version='0.1',
