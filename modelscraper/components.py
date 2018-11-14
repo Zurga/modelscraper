@@ -115,7 +115,7 @@ class Source(object):
     kwargs = []
     def __init__(self, name='', attrs=[], url_template='{}', url_regex='',
                  urls=[], func='', test_urls=[], n_workers=1, compression='',
-                 kwargs_format={}, duplicate=False):
+                 kwargs_format={}, duplicate=False, debug=False):
         self.attrs = attrs
         self.compression = compression
         self.duplicate = duplicate
@@ -125,6 +125,7 @@ class Source(object):
         self.test_urls = str_as_tuple(test_urls)
         self.url_template = url_template
         self.urls = urls
+        self.debug = debug
 
         # Compile the url_regex
         self.url_regex = re.compile(url_regex).search if url_regex else False
@@ -204,6 +205,8 @@ class Source(object):
             attrs = self.url_attrs[url]
             self.out_q.task_done()
             self.to_parse -= 1
+            if self.debug:
+                print(data)
             if not data:
                 logging.log(logging.WARNING, str(url) + 'no data was returned')
                 return None
@@ -588,7 +591,7 @@ class Model(BaseComponent):
 
 class Scraper(object):
     def __init__(self, name='', models=[], num_sources=1, awaiting=False,
-                 schedule='', logfile='', dummy=False, recurring=[], **kwargs):
+                 schedule='', logfile='', dummy=False, recurring=[]):
         super().__init__()
         self.name = name
         self.models = models
@@ -693,7 +696,7 @@ class Scraper(object):
                     for model in source.models:
                         objects, urls = model.parse(url, attrs, data)
                         if objects:
-                            print('Parsed', source.name, len(objects))
+                            print('Parsed', model.name, source.name, url, len(objects))
                             model.store_objects(objects, urls)
                             model.gen_source(objects)
                             if self.dummy:
