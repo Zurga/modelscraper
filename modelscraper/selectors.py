@@ -18,18 +18,21 @@ class TextSelector:
                 selected = selected.split(sel)
 
 
-class JavaScriptVarSelector(object):
+class JavascriptVarSelector(object):
     def __init__(self, selector):
         assert type(selector) is str, 'only a string is allowed as selector'
         self.all_scripts = CSSSelector('script')
         self.var_name = selector
-        self.var_regex = re.compile('''var\s*{}\s*=\s*([{{}}\[\]\s\n\r\:,\.\d\w'"\/\-\+\*\&%#<>!^\(\)\\\|\?^@]+);'''.format(selector)).findall
+        self.var_regex = re.compile('[var\s]+\s*{}\s*=\s*(.*\n*);'.format(
+            selector)).findall
 
     def __call__(self, data):
         scripts = self.all_scripts(data)
         for script in scripts:
-            for var in self.var_regex(script.text):
-                return var
+            text = script.text
+            if text:
+                for var in self.var_regex(script.text):
+                    return var
 
 
 class ORCSSSelector(object):
