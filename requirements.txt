@@ -8,4 +8,4 @@ diskcache
 pybloom-live
 user_agent
 click
-xmljson
+git+git://github.com/Zurga/xmljson
