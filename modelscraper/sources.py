@@ -8,7 +8,8 @@ from user_agent import generate_user_agent
 from .components import Source
 from .helpers import str_as_tuple
 from .source_workers import WebSourceWorker, FileSourceWorker, \
-    ProgramSourceWorker, ModuleSourceWorker, APISourceWorker
+    ProgramSourceWorker, ModuleSourceWorker, APISourceWorker, \
+    BrowserSourceWorker
 
 
 
@@ -58,7 +59,12 @@ class WebSource(Source):
 
 class BrowserSource(WebSource):
     kwargs = ('data', 'form', 'params', 'cookies')
-    def __init__(self, browser='firefox-esr', browser_executable='', *args, **kwargs):
+    source_worker = BrowserSourceWorker
+    def __init__(self, browser='firefox-esr', browser_executable='',
+                 script='', script_only=False, *args, **kwargs):
+        self.script = script
+        self.script_only=script_only
+
         assert browser.lower() == 'firefox-esr', \
             'Please use only firefox  as the browser, more will be added later'
         from selenium.webdriver.firefox.options import Options
