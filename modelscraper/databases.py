@@ -430,4 +430,3 @@ class FileWorker(BaseDatabaseImplementation):
 
     def read(self, model, objects, urls, **kwargs):
         pass
-
