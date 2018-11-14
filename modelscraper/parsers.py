@@ -11,6 +11,7 @@ from functools import singledispatch
 
 import lxml.html as lxhtml
 import lxml.etree as etree
+import lxml
 from lxml.cssselect import CSSSelector
 from cssselect import SelectorSyntaxError
 
@@ -18,10 +19,11 @@ from scrapely import Scraper
 import xmljson
 
 from .helpers import str_as_tuple, add_other_doc, wrap_list
-from .selectors import ORCSSSelector
+from .selectors import ORCSSSelector, JavascriptVarSelector
 
 
 logger = logging.getLogger(__name__)
+print(xmljson.__version__)
 
 
 class BaseParser(object):
@@ -107,6 +109,7 @@ class HTMLParser(BaseParser):
 
     data_types = (lxhtml.HtmlElement, etree._Element, lxhtml.FormElement)
     _table_row_selector = ORCSSSelector('th', 'td')
+    selectors = (CSSSelector, ORCSSSelector, etree.XPath, JavascriptVarSelector)
     def __init__(self, parse_escaped=True):
         super().__init__()
         self.scrapely_parser = None
@@ -146,7 +149,7 @@ class HTMLParser(BaseParser):
 
     def _get_selector(self, selector):
         if selector:
-            if type(selector) in (CSSSelector, ORCSSSelector, etree.XPath):
+            if type(selector) in self.selectors:
                 return selector
             else:
                 assert type(selector) is str, "selector is not a string %r" %selector
@@ -248,9 +251,9 @@ class HTMLParser(BaseParser):
             yield self._modify_text(sel_attr, **kwargs)
 
     #@add_other_doc(BaseParser._modify_text)
-    def url(self, selector=None):
+    def url(self, selector=None, **kwargs):
         selector = self._get_selector(selector)
-        return partial(self._attr, selector=selector, attr='href')
+        return partial(self._attr, selector=selector, attr='href', **kwargs)
 
     def date(self, selector=None, fmt: str='YYYYmmdd', attr: str=None, index:
                  int=None):
@@ -335,7 +338,8 @@ class JSONParser(HTMLParser):
                            ' could not be loaded as json')
                 return False
             xml = xmljson.badgerfish.etree(loaded_json,
-                                           root=etree.Element('root'))
+                                           root=etree.Element('root'),
+                                           drop_invalid_tags=True)
             return xml
 
     def dict(self, selector=None):
