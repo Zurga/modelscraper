@@ -5,6 +5,8 @@ import logging
 import traceback
 import sys
 import urllib
+import json
+from selenium.common.exceptions import JavascriptException
 
 import requests
 import dns.resolver
@@ -106,6 +108,36 @@ class WebSourceWorker(BaseSourceWorker):
             print(self.__class__.__name__, id(self), E)
             print(traceback.print_tb(sys.exc_info()[-1]))
             return False
+
+
+class BrowserSourceWorker(WebSourceWorker):
+    '''Source worker for the BrowserSource. By setting the script parameter in the
+    BrowserSource instance, the result of the script will be appended to the HTML
+    as JSON with the root tag: "<script id='result'></script>"
+    '''
+    def retrieve(self, url, kwargs):
+        response_text = super().retrieve(url, kwargs)
+        if self.parent.script:
+            if response_text:
+                try:
+                    script_result = self.parent.session.execute_script(
+                        self.parent.script)
+                    try:
+                        script_result = json.dumps(script_result)
+                    except Exception as E:
+                        print(str(E))
+                    if self.parent.script_only:
+                        return script_result
+                    else:
+                        return response_text + \
+                            '<script id="result">{}<script>'.format(script_result)
+
+
+                except JavascriptException as E:
+                    logger.log(logging.WARNING, 'The javascript is not valid:' + \
+                               str(E))
+                    return response_text
+        return response_text
 
 
 class FileSourceWorker(BaseSourceWorker):
