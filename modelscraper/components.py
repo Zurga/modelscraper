@@ -369,9 +369,9 @@ class Attr(BaseComponent):
         now also have a category attribute set to whatever value was gotten from
         the image_list_source.
     '''
-    def __init__(self, name='', func=None, value=None,
-                 attr_condition={}, source_condition={}, from_source=False,
-                 type=None, transfers=False, *args, **kwargs):
+    def __init__(self, name='', func=None, value=None, attr_condition={},
+                 source_condition={}, from_source=False, type=None,
+                 transfers=False, raw_data=False, *args, **kwargs):
         super().__init__(name=name, *args, **kwargs)
         assert (from_source and not self.emits) or not from_source, \
             "If the attr is coming from a source, it cannot emit into another source"
@@ -382,6 +382,7 @@ class Attr(BaseComponent):
         self.type = type
         self.from_source = from_source
         self.transfers = transfers
+        self.raw_data = raw_data
 
     def __getstate__(self):
         state = {}
@@ -426,11 +427,13 @@ def attr_dict(attrs):
 class Model(BaseComponent):
     def __init__(self, attrs=[], dated=False, database=[], preparser=None,
                  required=False, selector=None, source=None, table='',
-                 kws={}, overwrite=True, definition=False, *args, **kwargs):
+                 kws={}, overwrite=True, definition=False, debug=False, *args,
+                 **kwargs):
         super().__init__(*args, **kwargs)
         self.attrs = attr_dict(attrs)
         self.dated = dated
         self.database = wrap_list(database)
+        self.debug = debug
         self.kws = kws
         self.preparser = preparser
         self.required = required
@@ -553,7 +556,10 @@ class Model(BaseComponent):
 
             no_value = 0
             for attr in self.func_attrs:
-                value = [data]
+                if attr.raw_data:
+                    value = (raw_data,)
+                else:
+                    value = [data]
                 #try:
                 for func in attr.func:
                     value = [result for v in value for result in func(url, v)]
@@ -572,6 +578,9 @@ class Model(BaseComponent):
             if self.dated:
                 obj['_date'] = str(datetime.now())
             objects.append(obj)
+        if self.debug:
+            print(self.name, url, 'parsed:')
+            pp.pprint(objects)
         return objects, urls
 
     def store_objects(self, objects, urls):
@@ -702,7 +711,7 @@ class Scraper(object):
                             if self.dummy:
                                 pp.pprint(objects)
                         else:
-                            print('no objects', url)
+                            print('no objects', model.name, url)
                 elif res == False:
                     logging.log(logging.INFO, 'stopping' + str(source.name))
                     empty.append(source)
