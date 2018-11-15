@@ -15,6 +15,7 @@ from collections import defaultdict
 
 from pymongo import MongoClient, UpdateMany
 from pymongo.collection import Collection
+from pymongo.errors import ConnectionFailure
 
 from .helpers import add_other_doc
 
@@ -113,9 +114,16 @@ class MongoDB(BaseDatabase):
 
     def __init__(self, host=None, port=None, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.client = MongoClient(host=host, port=port, connect=False)
-        db = getattr(self.client, self.db)
-        self.worker = MongoDBWorker(parent=self, database=db, table=self.table)
+        test_client = MongoClient(host=host, port=port)
+        # Check if the MongoDB instance is reachable
+        try:
+            test_client.admin.command('ismaster')
+            del test_client
+            self.client = MongoClient(host=host, port=port, connect=False)
+            db = getattr(self.client, self.db)
+            self.worker = MongoDBWorker(parent=self, database=db, table=self.table)
+        except ConnectionFailure:
+            raise Exception('Database or server is not available. Is MongoDB installed?')
 
 
 class MongoDBWorker(BaseDatabaseImplementation):
