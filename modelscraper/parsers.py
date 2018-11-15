@@ -52,6 +52,7 @@ class BaseParser(object):
             replaced in the text. Used in combination with substitute.
         substitute: the substitute used in the replacers parameter.
         """
+        text = text.strip()
         if replacers:
             for key, subsitute in zip(replacers, substitute):
                 text = text.replace(key, substitute)
@@ -59,7 +60,7 @@ class BaseParser(object):
         if regex:
             regex = re.compile(regex)
             try:
-                text = [found for found in regex.findall(text)]
+                text = ''.join([found for found in regex.findall(text)])
             except:
                 print('regex error', text)
 
@@ -68,8 +69,8 @@ class BaseParser(object):
             if not matches:
                 return None
 
-        if numbers and any(map(str.isdigit, text)):
-            text = int(''.join([c for c in text if c.isdigit() and c]))
+        if numbers and any(map(str.isdecimal, text)):
+            text = int(''.join([c for c in text if c.isdecimal() and c]))
 
         if template:
             text = template.format(text)
@@ -332,6 +333,7 @@ class HTMLParser(BaseParser):
                 source.data = data
             self.parent._add_source(source)
 
+
 class JSONParser(HTMLParser):
     name = 'JSONParser'
     def _convert_data(self, url, data):
@@ -358,7 +360,6 @@ class JSONParser(HTMLParser):
             yield {child.tag: child.text for child in element.getchildren()}
 
 
-
 class TextParser(BaseParser):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -373,7 +374,7 @@ class TextParser(BaseParser):
                 data = ''
         return data
 
-    def _select(self, url, data, selector):
+    def _select(self, url, data, selector, debug=False):
         data = self._convert_data(url, data)
         if data:
             if selector:
@@ -401,7 +402,7 @@ class CSVParser(BaseParser):
                         ' url:'+ url)
             return False
 
-    def _select(self, url, data, selector):
+    def _select(self, url, data, selector, debug=False):
         data = self._convert_data(url, data)
         if selector and data:
             return wrap_list(data[selector])
