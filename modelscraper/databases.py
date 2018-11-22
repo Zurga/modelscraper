@@ -12,6 +12,7 @@ from datetime import datetime
 from multiprocessing import Process
 from multiprocessing import JoinableQueue as Queue
 from collections import defaultdict
+from contextlib import closing
 
 from pymongo import MongoClient, UpdateMany
 from pymongo.collection import Collection
@@ -33,14 +34,16 @@ class MetaDatabaseImplementation(type):
     def __new__(meta, name, bases, class_dict):
         funcs = ['create', 'read', 'update', 'delete']
         if bases != (object, ):
-            not_implemented = [func for func in funcs if func not in class_dict]
+            not_implemented = [func for func in funcs if func not in
+                               class_dict]
             if not_implemented:
                 raise NotImplementedError(
                     implement_error.format(name, str(not_implemented)))
         return type.__new__(meta, name, bases, class_dict)
 
 
-class BaseDatabaseImplementation(Process, metaclass=MetaDatabaseImplementation):
+class BaseDatabaseImplementation(Process,
+                                 metaclass=MetaDatabaseImplementation):
     create, read, update, delete = None, None, None, None
 
     def __init__(self, parent=None, database=None, table='', cache=10):
@@ -52,6 +55,7 @@ class BaseDatabaseImplementation(Process, metaclass=MetaDatabaseImplementation):
         self.parent = parent
         self.cache = cache
         self.func = getattr(self, parent.func, None)
+        self.logger = logging.getLogger('Databases.' + self.__class__.__name__)
 
     def run(self):
         while True:
@@ -65,12 +69,9 @@ class BaseDatabaseImplementation(Process, metaclass=MetaDatabaseImplementation):
             try:
                 res = self.func(model, objects, urls, **model.kws)
                 self.in_q.task_done()
-            except Exception as e:
-                logger.log(logging.ERROR,
-                            'Template storing error ' + str(self.name) +
-                            str(model.name) +' ' + str(e) + str(
-                                traceback.print_tb(sys.exc_info()[0]))
-                            + str(objects))
+            except Exception:
+                self.logger.exception('Template storing error:' +
+                                      str(model.name) + str(objects))
 
 
 class BaseDatabase(object):
@@ -89,7 +90,7 @@ class BaseDatabase(object):
                                                         str(key)))
 
     def store(self, model, objects, urls):
-        #pp.pprint(objects)
+        # pp.pprint(objects)
         self.worker.in_q.put((model, objects, urls))
 
     def start(self):
@@ -105,14 +106,20 @@ class BaseDatabase(object):
 class MongoDB(BaseDatabase):
     '''
     A database class for MongoDB.
-    The variables that can be set are:
-        host
-        port
     '''
     name = 'MongoDB'
     forbidden_chars = ('.', '$')
 
     def __init__(self, host=None, port=None, *args, **kwargs):
+        '''
+        Parameters
+        ----------
+        host : str, optional
+               The host that the MongoClient will connect to.
+
+        port : int, optional
+               The port that will be used with the MongoClient.
+        '''
         super().__init__(*args, **kwargs)
         test_client = MongoClient(host=host, port=port)
         # Check if the MongoDB instance is reachable
@@ -121,9 +128,11 @@ class MongoDB(BaseDatabase):
             del test_client
             self.client = MongoClient(host=host, port=port, connect=False)
             db = getattr(self.client, self.db)
-            self.worker = MongoDBWorker(parent=self, database=db, table=self.table)
+            self.worker = MongoDBWorker(parent=self, database=db,
+                                        table=self.table)
         except ConnectionFailure:
-            raise Exception('Database or server is not available. Is MongoDB installed?')
+            raise Exception('Database or server is not available.' +
+                            'Is MongoDB installed?')
 
 
 class MongoDBWorker(BaseDatabaseImplementation):
@@ -132,12 +141,12 @@ class MongoDBWorker(BaseDatabaseImplementation):
             return getattr(self.db, table)
         return getattr(self.db, self.table)
 
-    #!@add_other_doc(Collection.insert_many)
+    @add_other_doc(Collection.insert_many)
     def create(self, model, objects, urls, *args, **kwargs):
         coll = self.get_collection(model.table)
         return coll.insert_many(objects, *args, **kwargs)
 
-    #!@add_other_doc(Collection.bulk_write)
+    @add_other_doc(Collection.bulk_write)
     def update(self, model, objects, urls, key='', method='$set',
                upsert=True, date=False):
         coll = self.get_collection(model.table)
@@ -152,10 +161,17 @@ class MongoDBWorker(BaseDatabaseImplementation):
                        for obj, query in zip(objects, queries)]
         return coll.bulk_write(db_requests)
 
-    #!@add_other_doc(Collection.find)
-    def read(self, table='', query={}, **kwargs):
+    @add_other_doc(Collection.find)
+    def read(self, table='', filter={}, **kwargs):
+        '''
+        Parameters
+        ----------
+        table : str, optional
+                Which table to apply the find method to. This will be passed
+                automatically by the ::Model.query:: method.
+        '''
         coll = self.get_collection(table)
-        yield from coll.find(query, **kwargs)
+        yield from coll.find(filter=filter, **kwargs)
 
     def delete(self):
         pass
@@ -221,7 +237,7 @@ class CSVWorker(BaseDatabaseImplementation):
     def create_index(self, filename):
         index = defaultdict(list)
         if path.isfile(filename):
-            with open(filename) as fle:
+            with closing(open(filename)) as fle:
                 reader = csv.DictReader(fle)
                 for i, row in enumerate(reader):
                     index[row['url']].append(i)
@@ -232,7 +248,7 @@ class CSVWorker(BaseDatabaseImplementation):
     def create(self, model, objects, urls, **kwargs):
         filename = self.filename(model.table)
         existing = self.check_existing(model)
-        with open(filename, 'a') as fle:
+        with closing(open(filename, 'a')) as fle:
             writer = csv.DictWriter(fle,
                                     fieldnames=self.fieldnames(model))
             if not existing:
@@ -248,7 +264,7 @@ class CSVWorker(BaseDatabaseImplementation):
         if not self.index.get('filename', False):
             self.index[filename] = self.create_index(filename)
 
-        with open(filename, 'a') as fle:
+        with closing(open(filename, 'a')) as fle:
             writer = csv.DictWriter(fle,
                                     fieldnames=self.fieldnames(model))
             writer.writerows(objects)
@@ -275,6 +291,8 @@ class Sqlite(BaseDatabase):
         sqlite3.register_converter('dict', json_converter)
         sqlite3.register_adapter(list, json_adapter)
         sqlite3.register_converter('list', json_converter)
+        sqlite3.register_adapter(tuple, json_adapter)
+        sqlite3.register_converter('tuple', json_converter)
         self.worker = SqliteWorker(parent=self, database=connection,
                                    table=self.table)
 
@@ -350,8 +368,8 @@ class SqliteWorker(BaseDatabaseImplementation):
         table = self.get_table(model.table)
 
         with self.db as con:
-            # OLD WAY
-            values = list(zip([None] * len(urls), urls))
+            values = ((none, str(url)) for none, url in
+                      zip([None] * len(urls), urls))
             con.executemany(self.insert_query.format(table=table), values)
 
             # We select all the ids that were inserted to create the attrs
@@ -361,7 +379,7 @@ class SqliteWorker(BaseDatabaseImplementation):
                 table_name = '_'.join((table, attr))
 
                 for obj, url in zip(objects, urls):
-                    db_id = urls_ids[url]
+                    db_id = urls_ids[str(url)]
                     for value in obj[attr]:
                         con.execute(self.insert_query.format(table=table_name),
                                     (db_id, value))
@@ -371,7 +389,7 @@ class SqliteWorker(BaseDatabaseImplementation):
         urls_ids = []
         with self.db as con:
             for url in urls:
-                urls_ids.extend(con.execute(id_query, (url,)).fetchall())
+                urls_ids.extend(con.execute(id_query, (str(url),)).fetchall())
         return urls_ids
 
     def update(self, model, objects, urls, *args, **kwargs):
@@ -379,7 +397,7 @@ class SqliteWorker(BaseDatabaseImplementation):
         table = self.get_table(model.table)
 
         for (url, i) in self.urls_ids(table, urls):
-            obj_idx = urls.index(url)
+            obj_idx = urls.index(str(url))
             obj = objects[obj_idx]
 
             for attr in obj.keys():
@@ -397,7 +415,7 @@ class SqliteWorker(BaseDatabaseImplementation):
                 db_id = urls_ids[url]
                 con.execute(delete_query.format(table), (db_id,))
 
-    #TODO fix this method
+    # TODO fix this method
     def read(self, model, urls, *args, **kwargs):
         pass
 
@@ -416,9 +434,10 @@ class File(BaseDatabase):
         self.worker = FileWorker(database=database_folder, parent=self,
                                  table=self.table)
 
+
 class FileWorker(BaseDatabaseImplementation):
     def get_path(self, table):
-        full_path = self.db + table if table else self.table + '/'
+        full_path = os.getcwd() + self.db + table if table else self.table + '/'
         if not path.exists(full_path):
             os.makedirs(full_path)
         return full_path
@@ -426,8 +445,11 @@ class FileWorker(BaseDatabaseImplementation):
     def create(self, model, objects, urls, **kwargs):
         path = self.get_path(model.table)
         for objct in objects:
-            filename = path + '/' + objct['_url'].split('/')[-1]
-            with open(filename, 'w') as fle:
+            filename = path + '/' + str(objct['_url']).split('/')[-1]
+            # Check if the path is not a directory else remove the slash
+            if filename.endswith('/'):
+                filename = filename[:-1]
+            with closing(open(filename, 'w')) as fle:
                 fle.write(str(objct))
 
     def update(self, model, objects, urls, **kwargs):
