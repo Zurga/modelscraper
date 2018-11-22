@@ -22,11 +22,10 @@ from .helpers import str_as_tuple, add_other_doc, wrap_list
 from .selectors import ORCSSSelector, JavascriptVarSelector
 
 
-logger = logging.getLogger(__name__)
-print(xmljson.__version__)
-
-
 class BaseParser(object):
+    def __init__(self):
+        self.logger = logging.getLogger(self.__class__.__name__)
+
     def _convert_data(self, source):
         raise NotImplementedError()
 
@@ -39,19 +38,16 @@ class BaseParser(object):
         if data is not False:
             if selector:
                 selected = selector(data)
-                if debug:
-                    print(selected)
+                if not selected:
+                    self.logger.warning(str(selector) + 'selected nothing')
+                    if debug:
+                        print(etree.tostring(data))
                 return selected
             return (data,)
         return []
 
     def _modify_text(self, text, replacers=None, substitute='', regex: str='',
                 numbers: bool=False, needle=None, template=''):
-        """
-        replacers: string or list of values/regular expressions that have to be
-            replaced in the text. Used in combination with substitute.
-        substitute: the substitute used in the replacers parameter.
-        """
         text = text.strip()
         if replacers:
             for key, subsitute in zip(replacers, substitute):
@@ -77,6 +73,15 @@ class BaseParser(object):
         return text
 
     def text(self, selector=None, **kwargs):
+        """
+        Parameters
+        ----------
+        replacers: string or list of str
+                   That have to be replaced in the text. Used in combination
+                   with substitute.
+        substitute: str
+                   The substitute used in the replacers parameter.
+        """
         selector = self._get_selector(selector)
         return partial(self._text, selector=selector, **kwargs)
 
@@ -104,6 +109,14 @@ class BaseParser(object):
                     yield True
                 else:
                     yield False
+
+    def custom_func(self, selector=None, function=None):
+        selector = self._get_selector(selector)
+        return partial(self._custom_func, selector=selector, function=function)
+
+    def _custom_func(self, url, data, selector=None, function=None):
+        for element in self._select(url, data, selector):
+            yield function(element)
 
 
 class HTMLParser(BaseParser):
@@ -143,8 +156,7 @@ class HTMLParser(BaseParser):
                 return False
 
             except Exception as e:
-                logging.log(logging.WARNING, str(self) + ': Unable to use data '+
-                            'returned by URL:' + url +'\nException is: '+ str(e))
+                self.logger.exception("Unable to convert" + url + str(data))
                 return False
 
             urlparsed = urlparse.urlparse(url)
@@ -185,13 +197,6 @@ class HTMLParser(BaseParser):
                 yield objct
         return []
 
-    def custom_func(self, selector=None, function=None):
-        selector = self._get_selector(selector)
-        return partial(self._custom_func, selector=selector, function=function)
-
-    def _custom_func(self, url, data, selector=None, function=None):
-        for element in self._select(url, data, selector):
-            yield function(element)
 
     @add_other_doc(BaseParser._text)
     def text(self, selector=None, all_text=True, **kwargs):
@@ -212,37 +217,27 @@ class HTMLParser(BaseParser):
             yield self._modify_text(text, **kwargs)
 
     def table(self, selector=None):
-        '''
-        Parses a nxn table into a dictionary.
-        Works best when the input is a td selector.
-        Specify the amount of columns with the columns parameter.
-        example:
-            parse a 2x2 table
-            {'func': sel_table,
-            'params': {
-                'selector': CSSSelector('table td'),
-                'columns': 2,
-                'offset': 0,
-                }
-            }
-            leads to:
-            sel_table(html=lxml.etree, selector=CSSSelector('table td'),
-                    columns=2, offset=0)
-        '''
         selector = self._get_selector(selector)
         return partial(self._table, selector=selector)
 
     def _table(self, url, data, selector=None):
         for element in self._select(url, data, selector):
             for row in element.cssselect('tr'):
-                yield [cell.text_content() for cell in row.cssselect('td')]
+                cells = row.cssselect('td')
+                if cells:
+                    yield [cell.text_content() for cell in cells]
 
     #@add_other_doc(BaseParser._modify_text)
     def attr(self, selector=None, attr: str='', **kwargs):
-        '''
-        Extract an attribute of an HTML element.
-        The **kwargs are the keyword arguments that can be added are from
-        the BaseParser.modify_text method.
+        ''' Extract an attribute of an HTML element.
+
+        Parameters
+        ----------
+        selector : str
+                   A selector that can be used with this parser.
+
+        attr : str
+               The attribute to select from the element selected.
         '''
         selector = self._get_selector(selector)
         return partial(self._attr, selector=selector, attr=attr,
@@ -336,20 +331,32 @@ class HTMLParser(BaseParser):
 
 class JSONParser(HTMLParser):
     name = 'JSONParser'
+    dialects = {key.lower(): val for key, val in sorted(vars(xmljson).items())
+                if isinstance(val, type) and issubclass(val, xmljson.XMLData)}
+
+    def __init__(self, dialect='badgerfish', invalid_tags='drop', *args,
+                 **kwargs):
+        super().__init__(*args, **kwargs)
+        assert dialect in self.dialects, "Please choose a supported dialect" + \
+            str(dialects.keys())
+        self.converter = self.dialects[dialect](invalid_tags=invalid_tags)
+
     def _convert_data(self, url, data):
-        if type(data) in self.data_types:
+        if data and type(data) in self.data_types:
             return data
-        else:
+        elif data:
             try:
                 loaded_json = json.loads(data)
             except Exception as E:
-                logger.log(logging.WARNING, self.name + ' data from ' + url +
-                           ' could not be loaded as json')
+                self.logger.exception(url + ' could not be loaded as json' + '\n' +
+                                 str(data))
                 return False
-            xml = xmljson.badgerfish.etree(loaded_json,
-                                           root=etree.Element('root'),
-                                           drop_invalid_tags=True)
+            xml = self.converter.etree(loaded_json, root=etree.Element('root'))
             return xml
+        else:
+            self.logger.warning(url + 'returned no data, perhaps the selector is '+
+                           'not working...')
+            return False
 
     def dict(self, selector=None):
         selector = self._get_selector(selector)
@@ -369,8 +376,7 @@ class TextParser(BaseParser):
             try:
                 data = str(data)
             except Exception as E:
-                loggin.log(logging.WARNING, str(self) +
-                           ':Unable to convert data for this url ' + str(url))
+                self.logger.warning('Unable to convert data' + str(url))
                 data = ''
         return data
 
@@ -398,8 +404,8 @@ class CSVParser(BaseParser):
         elif type(data) == str:
             return [d.split(',') for d in data.split('\n') if d]
         else:
-            logging.log(WARNING, str(self) + ': The data returned is not csv' +
-                        ' url:'+ url)
+            self.logger.warning('Unable to convert data.' + url + '\n' +
+                                str(data))
             return False
 
     def _select(self, url, data, selector, debug=False):
