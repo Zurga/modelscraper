@@ -5,12 +5,14 @@ from itertools import zip_longest, chain
 from functools import partial
 from threading import BoundedSemaphore
 from queue import Empty, Queue
-from threading import Lock
+from threading import Thread, Lock
+from zipfile import ZipFile
 
 import inspect
 import logging
 import pprint
 import re
+import time
 import types
 
 from pybloom_live import ScalableBloomFilter
@@ -21,35 +23,46 @@ from . import databases
 
 
 pp = pprint.PrettyPrinter(indent=4)
-logger =  logging.getLogger(__name__)
+
+############# Logging #############
+logger = logging.getLogger('Scraper')
+
+# Stream handler for logging to the console.
+ch = logging.StreamHandler()
+ch.setLevel(logging.WARNING)
+
+# Formatter for nice messages
+formatter = logging.Formatter('%(asctime)s | %(name)s | %(levelname)s |' +
+                              '%(message)s')
+ch.setFormatter(formatter)
+
+# Add the handlers to  the logger
+logger.addHandler(ch)
 
 
 class BaseComponent(object):
     """
     A class that provides common functions for other components as well
     as common attributes.
-
-    Attributes
-    ==========
-    emits : Source, optional
-        This is the Source into which new urls will be submitted from either an
-        Attr on from a Template. In the case of an Attr, each value found by the
-        func specified will be used as an URL. Every other Attr in the Template is
-        available when the URL is passed to the Source. This also means that certain
-        values can be inserted in the keyword arguments which are available for the
-        different Sources.
-
-
-    kws : dict or list of dict, optional
-        These are the keywords that will be passed to the 'func'
-        attribute. If multiple funcs are given, the
-    name : string, optional
-        Used to register the Attr in the Template or the Template in the  Scraper.
-        If none is provided, the variable name given in the model definition
-        will be used.
     """
 
     def __init__(self, name='', emits=None):
+        """
+        Parameters
+        ----------
+        emits : Source, optional
+            This is the Source into which new urls will be submitted from either an
+            Attr on from a Template. In the case of an Attr, each value found by the
+            func specified will be used as an URL. Every other Attr in the Template is
+            available when the URL is passed to the Source. This also means that certain
+            values can be inserted in the keyword arguments which are available for the
+            different Sources.
+
+        name : string, optional
+            Used to register the Attr in the Template or the Template in the  Scraper.
+            If none is provided, the variable name given in the model definition
+            will be used.
+        """
         if not name:
             name = get_name(self)
             assert name, "Please specify a name or assign to a variable."
@@ -74,48 +87,48 @@ class BaseComponent(object):
         return self.__class__(**kwargs)  # noqa
 
 
-class Source(object):
-    '''
-    Attributes
-    ==========
-    name : string, optional
-        Used for logging purposes.
-
-    attrs : list of dict, dict, optional
-        The keys and values in the attrs will be passed to each object created
-        while parsing the data which came from this source. If a single dict is
-        passed, all the objects will have the same keys and values applied.
-
-        If a list is passed with the same length as the urls, the urls and attrs
-        will be zipped. I.E. each object from a specific URL will have specific
-        attrs.
-
-    url_template : string, optional
-        A string which can be formatted using the "str.format" notation. Whatever
-        is used as URL will be placed inside the "{}".
-        I.E. url_template = 'https://duckduckgo.com/q={}'
-
-    urls : list of strings, optional
-        A list of URLs from which data is to be retrieved.
-
-    test_urls : list of strings, optional
-        A list of URLs which will be used when the ":Scraper.dummy:" parameter
-        is set to True.
-
-    n_workers : int, optional
-        The amount of workers (or Threads) used by the workers of the Source
-
-    compression : string, optional
-        The compression type used for the data retrieved from each URL. At the
-        moment only Zip and Gzip are supported
-
-    kwargs_format : dict, optional
-        A mapping
-    '''
+class BaseSource(object):
     kwargs = []
     def __init__(self, name='', attrs=[], url_template='{}', url_regex='',
                  urls=[], func='', test_urls=[], n_workers=1, compression='',
                  kwargs_format={}, duplicate=False, debug=False):
+        '''
+        Parameters
+        ----------
+        name : string, optional
+            Used for logging purposes.
+
+        attrs : list of dict, dict, optional
+            The keys and values in the attrs will be passed to each object created
+            while parsing the data which came from this source. If a single dict is
+            passed, all the objects will have the same keys and values applied.
+
+            If a list is passed with the same length as the urls, the urls and attrs
+            will be zipped. I.E. each object from a specific URL will have specific
+            attrs.
+
+        url_template : string, optional
+            A string which can be formatted using the "str.format" notation. Whatever
+            is used as URL will be placed inside the "{}".
+            I.E. url_template = 'https://duckduckgo.com/q={}'
+
+        urls : list of strings, optional
+            A list of URLs from which data is to be retrieved.
+
+        test_urls : list of strings, optional
+            A list of URLs which will be used when the ":Scraper.dummy:" parameter
+            is set to True.
+
+        n_workers : int, optional
+            The amount of workers (or Threads) used by the workers of the Source
+
+        compression : string, optional
+            The compression type used for the data retrieved from each URL. At the
+            moment only Zip and Gzip are supported
+
+        kwargs_format : dict, optional
+            A mapping
+        '''
         self.attrs = attrs
         self.compression = compression
         self.duplicate = duplicate
@@ -258,7 +271,8 @@ class Source(object):
                 self.url_attrs[url] = attrs
                 kwargs = self.get_kwargs()
 
-                url = self.url_template.format(url)
+                if type(url) is str:
+                    url = self.url_template.format(url)
                 self.in_q.put((url, kwargs))
                 self.to_parse += 1
                 self.add_to_seen(url)
@@ -328,50 +342,110 @@ class Source(object):
             self.models.append(model)
 
 
+class BaseSourceWorker(Thread):
+    def __init__(self, parent, id=None, in_q=None, out_q=None,
+                 semaphore=None, lock=None):
+        super().__init__()
+        self.parent = parent
+        self.id = id
+        self.in_q = in_q
+        self.lock = lock
+        self.out_q = out_q
+        self.mean = 0
+        self.total_time = 0
+        self.visited = 0
+        self.retrieving = False
+        self.semaphore = semaphore
+        self.logger = logging.getLogger('Scraper.sources.' +
+                                        self.__class__.__name__)
+
+    def run(self):
+        while True:
+            start = time.time()
+            item = self.in_q.get()
+            if item is None:
+                break
+            try:
+                url, kwargs = item
+            except:
+                print(item, 'this went wrong')
+            with self.semaphore:
+                self.retrieving = True
+                data = self.retrieve(url, kwargs)
+            self._recalculate_mean(start)
+
+            if data and self.parent.compression == 'zip':
+                data = self.read_zip_file(data)
+            self.out_q.put((url, data))
+
+            self.in_q.task_done()
+            self.retrieving = False
+
+    def retrieve(self):
+        raise NotImplementedError
+
+    def _recalculate_mean(self, start):
+        self.visited += 1
+        self.total_time += time.time() - start
+        return self.total_time / self.visited
+
+    def read_zip_file(self, zipfile):
+        content = ''
+        with ZipFile(BytesIO(zipfile)) as myzip:
+            for file_ in myzip.namelist():
+                with myzip.open(file_) as fle:
+                    content += fle.read().decode('utf8')
+        return content
+
+
+
 class Attr(BaseComponent):
     '''
     An Attr is used to hold a value for a model.
     This value is created by selecting data from the source using the selector,
     after which the "func" is called on the selected data.
-
-    func : method or list of methods, optional
-        One or multiple methods provided by a Parser. If a list is given, the data
-        from one method is passed onto another. The methods can be from different
-        parsers, the data will be converted by the parser.
-        For example, a combination of these two methods will allow for the
-        selection of JSON which is embedded in HTML like this:
-        <span>{"test": "value"}</span>
-
-        htmlp = HTMLParser()
-        jsonp = JSONParser()
-        nested_json = Attr(name='nested', func=[htmlp.text(selector='span'),
-                                                jsonp.text(selector='test')])
-
-
-    transfers : bool, default False
-        This determines whether the Attr will be copied as a name: value pair to the
-        source which another Attr might be emitting into.
-        Consider the following example where an image url scraped with the category
-        attribute from the same model by setting the 'transfers' parameter to True on         the category attribute:
-
-        htmlp = HTMLParser()
-        image_list_source = WebSource()
-        image_source = WebSource()
-
-        image_url = Attr(func=htmlp.attr(selector='img', attr='src'),
-                         emits=image_source)
-        category = Attr(func=htmlp.text(selector='span.category'),
-                        transfers=True)
-
-        model = Model(source=image_list_source, attrs=[domain, url])
-
-        The objects that are generated from the data in the image_source will
-        now also have a category attribute set to whatever value was gotten from
-        the image_list_source.
     '''
     def __init__(self, name='', func=None, value=None, attr_condition={},
                  source_condition={}, from_source=False, type=None,
                  transfers=False, raw_data=False, *args, **kwargs):
+        '''
+        Parameters
+        ----------
+        func : method or list of methods, optional
+            One or multiple methods provided by a Parser. If a list is given,
+            the data from one method is passed onto another. The methods can be
+            from different parsers, the data will be converted by the parser.
+            For example, a combination of these two methods will allow for the
+            selection of JSON which is embedded in HTML like this:
+
+            >>> html = "<span>{'test': 'value'}</span>"
+            >>> htmlp = HTMLParser()
+            >>> jsonp = JSONParser()
+            >>> nested_json = Attr(
+                                name='nested',
+                                func=[htmlp.text(selector='span'),
+                                jsonp.text(selector='test')])
+
+        transfers : bool, default False
+            This determines whether the Attr will be copied as a name: value
+            pair to the source which another Attr might be emitting into.
+            Consider the following example where an image url scraped with the
+            category attribute from the same model by setting the 'transfers'
+            parameter to True on the category attribute:
+
+            >>> htmlp = HTMLParser()
+            >>> image_list_source = WebSource()
+            >>> image_source = WebSource()
+            >>> image_url = Attr(func=htmlp.attr(selector='img', attr='src'),
+                                     emits=image_source)
+            >>> category = Attr(func=htmlp.text(selector='span.category'),
+                                    transfers=True)
+            >>> model = Model(source=image_list_source, attrs=[domain, url])
+
+            The objects that are generated from the data in the image_source will
+            now also have a category attribute set to whatever value was gotten from
+            the image_list_source.
+        '''
         super().__init__(name=name, *args, **kwargs)
         assert (from_source and not self.emits) or not from_source, \
             "If the attr is coming from a source, it cannot emit into another source"
@@ -613,9 +687,9 @@ class Scraper(object):
 
         # Set up the logging
         if logfile:
-            logging.basicConfig(filename=logfile, level=logging.WARNING)
-        else:
-            logging.basicConfig(level=logging.WARNING)
+            fh = logging.FileHandler(logfile)
+            fh.setFormatter(formatter)
+            logger.addHandler(fh)
         self.databases, parsers = set(), set()
 
         # Populate lists of the databases used, the parsers and the sources
@@ -671,8 +745,9 @@ class Scraper(object):
         for model, attrs in upstream_attrs.items():
             for attr in attrs:
                 if attr not in model.attrs:
-                    print('This attr should be added to the model',
-                          model.name, attr)
+                    logger.warning(
+                        'Attr {} should be added to model {}'.format(
+                            model.name, attr))
 
     @property
     def dummy(self):
@@ -705,15 +780,20 @@ class Scraper(object):
                     for model in source.models:
                         objects, urls = model.parse(url, attrs, data)
                         if objects:
-                            print('Parsed', model.name, source.name, url, len(objects))
+                            logger.info('Parsed model {}, source {}, url {}' +
+                                        ', #objcects {}'.format(model.name,
+                                                                source.name,
+                                                                url,
+                                                                len(objects)))
                             model.store_objects(objects, urls)
                             model.gen_source(objects)
                             if self.dummy:
                                 pp.pprint(objects)
                         else:
-                            print('no objects', model.name, url)
+                            logger.info('No objects for model {} and url {}'.format(
+                                model.name, url))
                 elif res == False:
-                    logging.log(logging.INFO, 'stopping' + str(source.name))
+                    logger.info('Stopping ' + str(source.name))
                     empty.append(source)
                 else:
                     continue
