@@ -8,4 +8,6 @@ diskcache
 pybloom-live
 user_agent
 click
-git+git://github.com/Zurga/xmljson
+xmljson
+git+git://github.com/numpy/numpydoc
+influxdb
