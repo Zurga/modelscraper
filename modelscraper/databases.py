@@ -1,22 +1,18 @@
+from collections import defaultdict
+from contextlib import closing
+from datetime import datetime
+from itertools import zip_longest
+from multiprocessing import JoinableQueue as Queue
+from multiprocessing import Process
 import csv
 import json
 import logging
 import os
 import pprint
-import subprocess
 import sqlite3
-import sys
+import subprocess
 import time
-import traceback
-from datetime import datetime
-from multiprocessing import Process
-from multiprocessing import JoinableQueue as Queue
-from collections import defaultdict
-from contextlib import closing
 
-from pymongo import MongoClient, UpdateMany
-from pymongo.collection import Collection
-from pymongo.errors import ConnectionFailure
 
 from .helpers import add_other_doc
 
@@ -67,7 +63,7 @@ class BaseDatabaseImplementation(Process,
 
             # Call to the functions in this class
             try:
-                res = self.func(model, objects, urls, **model.kws)
+                self.func(model, objects, urls, **model.kws)
                 self.in_q.task_done()
             except Exception:
                 self.logger.exception('Template storing error:' +
@@ -86,8 +82,9 @@ class BaseDatabase(object):
 
     def check_forbidden_chars(self, key):
         if any(c in key for c in self.forbidden_chars):
-            raise Exception(forbidden_characters.format(str(forbidden_chars),
-                                                        str(key)))
+            raise Exception(
+                forbidden_characters.format(str(self.forbidden_chars),
+                                            str(key)))
 
     def store(self, model, objects, urls):
         # pp.pprint(objects)
@@ -120,6 +117,10 @@ class MongoDB(BaseDatabase):
         port : int, optional
                The port that will be used with the MongoClient.
         '''
+        from pymongo import MongoClient, UpdateMany # noqa
+        from pymongo.collection import Collection # noqa
+        from pymongo.errors import ConnectionFailure
+
         super().__init__(*args, **kwargs)
         test_client = MongoClient(host=host, port=port)
         # Check if the MongoDB instance is reachable
@@ -141,12 +142,12 @@ class MongoDBWorker(BaseDatabaseImplementation):
             return getattr(self.db, table)
         return getattr(self.db, self.table)
 
-    @add_other_doc(Collection.insert_many)
+    # @add_other_doc(Collection.insert_many)
     def create(self, model, objects, urls, *args, **kwargs):
         coll = self.get_collection(model.table)
         return coll.insert_many(objects, *args, **kwargs)
 
-    @add_other_doc(Collection.bulk_write)
+    # @add_other_doc(Collection.bulk_write)
     def update(self, model, objects, urls, key='', method='$set',
                upsert=True, date=False):
         coll = self.get_collection(model.table)
@@ -157,11 +158,11 @@ class MongoDBWorker(BaseDatabaseImplementation):
                        for obj in objects)
 
         # insert all the objects in the database
-        db_requests = [UpdateMany(query, {method: obj}, upsert=upsert)
+        db_requests = [UpdateMany(query, {method: obj}, upsert=upsert) # noqa
                        for obj, query in zip(objects, queries)]
         return coll.bulk_write(db_requests)
 
-    @add_other_doc(Collection.find)
+    # @add_other_doc(Collection.find)
     def read(self, table='', filter={}, **kwargs):
         '''
         Parameters
@@ -276,6 +277,7 @@ class CSVWorker(BaseDatabaseImplementation):
 def json_adapter(dictionary):
     return json.dumps(dictionary)
 
+
 def json_converter(s):
     return json.loads(s)
 
@@ -331,7 +333,6 @@ class SqliteWorker(BaseDatabaseImplementation):
         return table
 
     def create_schema(self, model):
-        attrs = model.attrs
         table = self.get_table(model.table)
         # TODO set correct types for the attrs
         yield self.url_table.format(table=table)
@@ -375,14 +376,18 @@ class SqliteWorker(BaseDatabaseImplementation):
             # We select all the ids that were inserted to create the attrs
             urls_ids = dict(self.urls_ids(table, urls))
 
-            for attr in model.attrs.keys():
-                table_name = '_'.join((table, attr))
+            for attr in model.attrs:
+                table_name = '_'.join((table, attr.name))
 
                 for obj, url in zip(objects, urls):
                     db_id = urls_ids[str(url)]
-                    for value in obj[attr]:
-                        con.execute(self.insert_query.format(table=table_name),
-                                    (db_id, value))
+                    if attr.multiple and len(obj[attr.name]) > 1:
+                        values = list(zip_longest(obj[attr.name], [db_id]))
+                        print(values)
+                    else:
+                        values = (db_id, obj[attr.name])
+                    con.execute(self.insert_query.format(table=table_name),
+                                values)
 
     def urls_ids(self, table, urls):
         id_query = self.id_query.format(table=table)
@@ -396,14 +401,16 @@ class SqliteWorker(BaseDatabaseImplementation):
         self.check_schema(model)
         table = self.get_table(model.table)
 
-        for (url, i) in self.urls_ids(table, urls):
-            obj_idx = urls.index(str(url))
-            obj = objects[obj_idx]
+        with self.db as con:
+            for (url, i) in self.urls_ids(table, urls):
+                obj_idx = urls.index(str(url))
+                obj = objects[obj_idx]
 
-            for attr in obj.keys():
-                table_name = '_'.join((table, attr))
-                for value in obj[attr]:
-                    con.execute(query.format(table_name, attr), (value, i))
+                for attr in model.attr.values():
+                    table_name = '_'.join((table, attr.name))
+                    for value in obj[attr]:
+                        con.execute(self.update_query.format(table_name, attr),
+                                    (value, i))
 
     def delete(self, model, objects, urls, *args, **kwargs):
         self.check_schema(model)
@@ -421,10 +428,11 @@ class SqliteWorker(BaseDatabaseImplementation):
 
 
 class File(BaseDatabase):
-    '''A database that has files as storage. The db parameter will be
-    interpreted as the base folder in which to store the objects. The
-    table parameter will be interpreted as the subfolders that the objects will
-    be stored in.'''
+    '''
+    A database that has files as storage. The db parameter will be interpreted
+    as the base folder in which to store the objects. The table parameter will
+    be interpreted as the subfolders that the objects will be stored in.
+    '''
 
     name = 'File'
 
@@ -459,4 +467,35 @@ class FileWorker(BaseDatabaseImplementation):
         pass
 
     def read(self, model, objects, urls, **kwargs):
+        pass
+
+
+class InfluxDB(BaseDatabase):
+    '''
+    A implementation of the Influx Database for the storage of
+    timeseries data.
+    '''
+
+    _name = 'InfluxDB'
+
+    def __init__(self, host='localhost', port=8086, *args, **kwargs):
+        from influxdb import InfluxDBClient
+
+        super().__init__(*args, **kwargs)
+        database = InfluxDBClient(host=host, port=port, database=self.db)
+        self.worker = InfluxDBWorker(parent=self, database=database,
+                                     table=self.table)
+
+
+class InfluxDBWorker(BaseDatabaseImplementation):
+    def create(self, model, objects, urls, **kwargs):
+        pass
+
+    def update(self, model, objects, urls, **kwargs):
+        pass
+
+    def read(self, model, objects, urls, **kwargs):
+        pass
+
+    def delete(self, model, objects, urls, **kwargs):
         pass
