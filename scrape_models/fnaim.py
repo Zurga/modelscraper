@@ -1,5 +1,5 @@
 from modelscraper import Scraper, WebSource, MongoDB, JSONParser, HTMLParser,\
-    ORCSSSelector, Attr, Model
+    ORCSSSelector, Model
 from scrape_models.objects.houses import url, contract, construction_type, \
     surface, rooms, place, lat, lon, price, offer_id, offer_type, house
 
@@ -18,10 +18,9 @@ params = '&'.join(keys + '%0d' % reg
 
 js_url = 'https://www.fnaim.fr/include/ajax/annonce/ajax.annonceItemsJson.php'
 fnaim_source = WebSource(urls=[js_url, js_url], func='get',
-                         # params=['&'.join([params, 'idTransaction=1']),
-                         #        '&'.join([params, 'idTransaction=2'])],
+                         params=['&'.join([params, 'idTransaction=1']),
+                                 '&'.join([params, 'idTransaction=2'])],
                          test_urls=[js_url + '?keys[]=75106&idTransaction=1'],
-                         debug=True,
                          )
 
 annonce_source = WebSource(
@@ -30,7 +29,7 @@ annonce_source = WebSource(
     params='id={offer_id}&type={offer_type}', func='get',
     debug=True, session=fnaim_source.session)
 
-estate_agent_source = WebSource(session=fnaim_source.session, debug=True)
+estate_agent_source = WebSource(session=fnaim_source.session)
 
 offer = house(
     source=fnaim_source,
@@ -62,7 +61,6 @@ contact_persons_selector = ORCSSSelector(
 mini_offer = Model(
     source=annonce_source,
     name='mini_offer',
-    debug=True,
     attrs=[
         url(func=htmlparser.url('.lien_agence.info_agence'),
             emits=estate_agent_source)
