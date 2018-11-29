@@ -1,10 +1,12 @@
 import attr
 from lxml.cssselect import CSSSelector
+from cssselect import SelectorSyntaxError
+import lxml.etree as etree
 import re
 from .helpers import str_as_tuple
 
 
-#TODO fix the TextSelector
+# TODO fix the TextSelector
 @attr.s
 class TextSelector:
     selector = attr.ib(default=attr.Factory(list), convert=str_as_tuple)
@@ -32,7 +34,7 @@ class JavascriptVarSelector(object):
             text = script.text
             if text:
                 for var in self.var_regex(script.text):
-                    return var
+                    yield var
 
 
 class ORCSSSelector(object):
@@ -44,15 +46,25 @@ class ORCSSSelector(object):
 
     def __init__(self, *args):
         assert len(args) > 1, "Add multiple selectors"
-        self.selectors = [CSSSelector(selector) for selector in args]
+        self.selectors = []
+        for selector in args:
+            try:
+                selector = CSSSelector(selector)
+                self.selectors.append(selector)
+            except SelectorSyntaxError:
+                try:
+                    selector = etree.XPath(selector)
+                    self.selectors.append(selector)
+                    print('xpath selector')
+                except etree.XpathSyntaxError:
+                    raise Exception('Not a valid selector')
 
     def __call__(self, data):
         for selector in self.selectors:
             selected = selector(data)
             if selected:
                 return selected
-            return []
-
+        return []
 
 
 class SliceSelector(object):
@@ -67,4 +79,3 @@ class SliceSelector(object):
         if len(self.selector) == 3:
             return data[self.selector[0]:self.selector[1]:
                         self.selector[2]]
-
