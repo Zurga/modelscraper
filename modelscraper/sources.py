@@ -1,12 +1,6 @@
-from collections import defaultdict
-import logging
 import os
-from threading import Thread
 import time
 import subprocess
-import logging
-import traceback
-import sys
 import urllib
 import json
 
@@ -14,11 +8,11 @@ import json
 from selenium.common.exceptions import JavascriptException
 from user_agent import generate_user_agent
 import dns.resolver
-from requests import Request, Session
+import requests
 
 
 from .components import BaseSource, BaseSourceWorker
-from .helpers import str_as_tuple, read_zip_file
+# from .helpers import str_as_tuple
 
 
 class WebSourceWorker(BaseSourceWorker):
@@ -78,7 +72,7 @@ class WebSource(BaseSource):
 
     def __init__(self, cookies=None, data=[], domain='', form=[],
                  func='get', headers={}, json_key='', params=[],
-                 session=Session(),
+                 session=requests.Session(),
                  time_out=1, user_agent=True, *args, **kwargs):
         '''
         Parameters
@@ -167,7 +161,7 @@ class WebSource(BaseSource):
         if type(url) is str:
             url = self.url_template.format(url)
 
-        prepared = Request(self.func, url, **kwargs).prepare()
+        prepared = requests.Request(self.func, url, **kwargs).prepare()
 
         if prepared.url not in self.seen:
             if self.url_regex and not self.url_regex(url):
@@ -217,7 +211,7 @@ class BrowserSource(WebSource):
     def __init__(self, browser='firefox-esr', browser_executable='',
                  script='', script_only=False, *args, **kwargs):
         self.script = script
-        self.script_only=script_only
+        self.script_only = script_only
 
         assert browser.lower() == 'firefox-esr', \
             'Please use only firefox  as the browser, more will be added later'
@@ -229,7 +223,8 @@ class BrowserSource(WebSource):
             binary = os.popen('which ' + browser).read().strip()
         else:
             binary = browser_executable
-        assert binary != '', 'The browser you chose was not installed on the system'
+        assert binary != '', 'The browser you chose was not ' + \
+            'installed on the system'
         binary = FirefoxBinary(binary)
 
         options = Options()
@@ -321,7 +316,8 @@ class ModuleSource(BaseSource):
 
         self.module = module
         if conversion:
-            assert callable(conversion), "Please provide a callable as a conversion"
+            assert callable(conversion), "Please provide a callable as a " + \
+                "conversion"
         self.conversion = conversion
 
 
