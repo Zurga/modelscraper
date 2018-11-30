@@ -1,4 +1,4 @@
-from collections import defaultdict
+from collections import defaultdict, Counter
 from copy import copy
 from datetime import datetime
 from io import BytesIO
@@ -16,10 +16,8 @@ import types
 
 from pybloom_live import ScalableBloomFilter
 
-from .helpers import str_as_tuple, wrap_list, get_name, \
-    add_other_doc
-
-from . import databases
+from .helpers import wrap_list, get_name, \
+    add_other_doc, get_next
 
 
 pp = pprint.PrettyPrinter(indent=4)
@@ -46,7 +44,7 @@ class BaseComponent(object):
     as common attributes.
     """
 
-    def __init__(self, name='', emits=None):
+    def __init__(self, name='', emits=[]):
         """
         Parameters
         ----------
@@ -60,7 +58,7 @@ class BaseComponent(object):
             name = get_name(self)
             assert name, "Please specify a name or assign to a variable."
         self.name = name
-        self.emits = emits
+        self.emits = wrap_list(emits)
 
     def __call__(self, **kwargs):
         parameters = self.get_init_parameters()
@@ -144,7 +142,7 @@ class BaseSource(object):
         self.func = func
         self.kwargs_format = kwargs_format
         self.n_workers = n_workers
-        self.test_urls = str_as_tuple(test_urls)
+        self.test_urls = wrap_list(test_urls)
         self.url_template = url_template
         self.urls = urls
         self.debug = debug
@@ -187,11 +185,10 @@ class BaseSource(object):
         if source in self.upstream_sources:
             self.upstream_sources.pop(self.upstream_source.index(source))
 
-    def is_upstream_alive(self):
-        return any(source.is_alive() for source in self.upstream_sources)
-
-    def is_alive(self):
-        return any(worker.is_alive() for worker in self.workers)
+    def is_alive(self, iterator=None):
+        if not iterator:
+            iterator = self.workers
+        return any(worker.is_alive() for worker in iterator)
 
     def retrieving(self):
         return any(w.retrieving for w in self.workers)
@@ -239,7 +236,8 @@ class BaseSource(object):
         if not self.upstream_sources and not self.to_parse \
                 and not self.retrieving():
             return True
-        elif self.upstream_sources and not self.is_upstream_alive() \
+        elif self.upstream_sources and not \
+            self.is_alive(self.upstream_sources) \
                 and not self.to_parse and not self.retrieving():
             return True
         return False
@@ -254,18 +252,10 @@ class BaseSource(object):
     def consume(self):
         if self.urls:
             for _ in range(self.url_amount):
-                if type(self.urls) is list:
-                    try:
-                        url = self.urls.pop()
-                    except IndexError:
-                        self.urls = False
-                        break
-                elif isinstance(self.urls, types.GeneratorType):
-                    try:
-                        url = next(self.urls)
-                    except StopIteration:
-                        self.urls = False
-                        break
+                url = get_next(self.urls)
+                if url is False:
+                    self.urls = False
+                    break
 
                 if self.attrs:
                     if type(self.attrs) is list:
@@ -294,12 +284,12 @@ class BaseSource(object):
     def add_to_seen(self, url):
         self.seen.add(url)
 
-    def add_source(self, url, attrs, objct={}):
-        if url not in self.seen:
+    def add_source(self, url, attrs, objct={}, re_insert=False):
+        if url not in self.seen or re_insert:
             kwargs = self.get_kwargs(objct)
             if self.url_regex and not self.url_regex(url):
                 return False
-            if type(url) is str:
+            if type(url) is str and not re_insert:
                 url = self.url_template.format(url)
             self.in_q.put((url, kwargs, attrs))
             self.to_parse += 1
@@ -312,15 +302,9 @@ class BaseSource(object):
             if kwarg:
                 # If the kwargs are in a list or generator, we get the next
                 # value.
-                if type(kwarg) is list:
-                    value = kwarg.pop(0)
-                elif isinstance(kwarg, types.GeneratorType):
-                    try:
-                        value = next(value)
-                    except StopIteration:
-                        continue
-                else:
-                    value = kwarg
+                value = get_next(kwarg)
+                if value is False:
+                    continue
 
                 # Format the value for the keyword argument based on an object
                 # that was passed.
@@ -372,8 +356,7 @@ class BaseSourceWorker(Thread):
         self.visited = 0
         self.retrieving = False
         self.semaphore = semaphore
-        self.logger = logging.getLogger('Scraper.sources.' +
-                                        self.__class__.__name__)
+        self.logger = logger
 
     def run(self):
         while True:
@@ -524,7 +507,7 @@ class Attr(BaseComponent):
                 return False
         return True
 
-    def _parse(self, url, data):
+    def parse(self, url, data):
         value = [data]
         for func in self.func:
             try:
@@ -559,7 +542,7 @@ def attr_dict(attrs):
 
 class Model(BaseComponent):
     def __init__(self, name='', emits=None, attrs=[], dated=False, database=[],
-                 preparser=None, required=False, selector=None, source=None,
+                 preparser=None, required=False, selector=None, source=[],
                  table='', kws={}, overwrite=True, definition=False,
                  debug=False):
         super().__init__(name=name, emits=emits)
@@ -590,16 +573,39 @@ class Model(BaseComponent):
             self.emit_attrs = [attr for attr in self.attrs
                                if attr.emits]
 
+            for self_source in self.source:
+                self_source.register_model(self)
+                for attr in self.emit_attrs:
+                    for source in attr.emits:
+                        source.register_upstream_source(self_source)
+
             if not self.emits:
                 self.transfers = [attr.name for attr in self.attrs
                                   if attr.transfers]
             else:
+                for self_source in self.source:
+                    self_source.register_model(self)
+                    for source in self.emits:
+                        source.register_upstream_source(self_source)
+
                 self.transfers = self.attrs.keys()
 
             self.func_attrs = [attr for attr in self.attrs
                                if attr.func]
+
+            self.amount_of_attrs = len(self.func_attrs)
+            # Get the most used parser classes
+            if not self.selector:
+                parsers = Counter(func.parser for attr in self.func_attrs for
+                                  func in attr.func)
+                most_used = parsers.most_common(1)[0][0]
+                self.selector = [most_used.convert_data]
+            else:
+                self._preparser = self.selector
+
             self.value_attrs = [attr for attr in self.attrs
-                                if attr not in self.func_attrs]
+                                if attr not in self.func_attrs
+                                and not attr.from_source]
 
             if 'url' not in self.attrs:
                 self.attrs['url'] = Attr(name='url')
@@ -643,7 +649,7 @@ class Model(BaseComponent):
             # next source.
             if isinstance(attr.emits, dict):
                 for objct in objects:
-                    attrs = {'_url': objct['_url']}
+                    attrs = {'_url': objct['url']}
                     for value in wrap_list(objct[attr.name]):
                         if value:
                             source = attr.emits.get(value)
@@ -656,15 +662,17 @@ class Model(BaseComponent):
                             if url:
                                 attrs = {key: objct[key] for key in
                                          self.transfers}
-                                attrs['_url'] = objct['_url']
-                                attr.emits.add_source(url, attrs, objct)
+                                attrs['_url'] = objct['url']
+                                for source in attr.emits:
+                                    source.add_source(url, attrs, objct)
 
         if self.emits:
             for objct in objects:
                 urls = objct.get('url', False)
                 if urls:
                     for url in urls:
-                        self.emits.add_source(url, objct, objct)
+                        for source in self.emits:
+                            source.add_source(url, objct, objct)
                 else:
                     warning = 'No url is specified for object {}. ' + \
                         'Cannot emit source.'
@@ -679,29 +687,31 @@ class Model(BaseComponent):
         objects, urls = [], []
 
         if raw_data:
-            if self.selector:
-                extracted = raw_data
-                for sel in self.selector:
-                    extracted = sel(url, extracted)
-            else:
-                extracted = (raw_data,)
+            extracted = raw_data
+            for sel in self.selector:
+                extracted = sel(url, extracted)
 
             for data in extracted:
                 obj = {'_url': url, **attrs}
 
                 no_value = 0
                 for attr in self.func_attrs:
-                    value = attr._parse(url, data if not attr.raw_data else
-                                        raw_data)
+                    value = attr.parse(url, data if not attr.raw_data else
+                                       raw_data)
                     if not value:
                         no_value += 1
                     obj[attr.name] = value
+
+                if self.required:
+                    if no_value == self.amount_of_attrs:
+                        for source in self.source:
+                            source.add_source(url, attrs, re_insert=True)
 
                 for attr in self.value_attrs:
                     obj[attr.name] = attr.value
 
                 if 'url' not in obj:
-                    obj['url'] = obj['_url']
+                    obj['url'] = url
 
                 urls.extend(obj.get('url', []))
 
@@ -719,10 +729,8 @@ class Model(BaseComponent):
 
     # TODO fix to new database spec
     def query(self, query={}):
-        db_type = getattr(databases, db_type)
-        if isinstance(db_type, type):
-            db_type = db_type()
-        yield from db_type().read(self,query=query)
+        for database in self.database:
+            yield from database.read(self, query=query)
 
     def all(self):
         yield from self.query()
@@ -748,20 +756,13 @@ class Scraper(object):
             logger.addHandler(fh)
         self.databases = set()
 
+        self._after_init()
+
+    def _after_init(self):
         # Populate lists of the databases used, the parsers and the sources
         for model in self.models:
-            model.validate()
             for source in model.source:
-                source.register_model(model)
-                if model.emits:
-                        model.emits.register_upstream_source(source)
                 self.sources.add(source)
-
-            # Register the upstream sources for each source that expects
-            # something.
-            for attr in model.emit_attrs:
-                for source in model.source:
-                    attr.emits.register_upstream_source(source)
 
             for db in model.database:
                 self.databases.add(db)
@@ -783,7 +784,7 @@ class Scraper(object):
             "any Template"
         for model in self.models:
             for attr in model.emit_attrs:
-                assert attr.emits in self.sources,\
+                assert all(source in self.sources for source in attr.emits),\
                     unused_source.format(attr.name)
 
         upstream_attrs = defaultdict(set)
