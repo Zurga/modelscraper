@@ -25,6 +25,21 @@ def extract_section(obj, section):
     return []
 
 
+def get_next(iterator, index=0):
+    if isinstance(iterator, list):
+        try:
+            return iterator.pop(index)
+        except IndexError:
+            return False
+    elif isinstance(iterator, types.GeneratorType):
+        try:
+            return next(iterator)
+        except StopIteration:
+            return False
+    else:
+        return iterator
+
+
 def add_other_doc(other_func, section=''):
     '''
     Decorator method which will copy documentation from one method into
