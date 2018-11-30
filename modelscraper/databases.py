@@ -73,12 +73,13 @@ class BaseDatabaseImplementation(Process,
 class BaseDatabase(object):
     forbidden_chars = []
 
-    def __init__(self, db='', table='', func='create', kwargs={}):
+    def __init__(self, db='', table='', func='create', drop_on_start=False):
         assert db, "At least the database name is required"
         self.in_q = Queue()
         self.db = db
         self.table = table
         self.func = func
+        self.drop_on_start = drop_on_start
 
     def check_forbidden_chars(self, key):
         if any(c in key for c in self.forbidden_chars):
@@ -132,7 +133,7 @@ class MongoDB(BaseDatabase):
             self.worker = MongoDBWorker(parent=self, database=db,
                                         table=self.table)
         except ConnectionFailure:
-            raise Exception('Database or server is not available.' +
+            raise Exception('Database or server is not available. ' +
                             'Is MongoDB installed?')
 
 
