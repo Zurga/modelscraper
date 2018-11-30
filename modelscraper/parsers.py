@@ -10,7 +10,7 @@ import lxml.etree as etree
 from lxml.cssselect import CSSSelector
 from cssselect import SelectorSyntaxError
 
-from scrapely import Scraper
+# from scrapely import Scraper
 from jq import jq, _Program
 
 from .helpers import add_other_doc, wrap_list, format_docstring
@@ -21,7 +21,7 @@ class BaseParser(object):
     def __init__(self):
         self.logger = logging.getLogger(self.__class__.__name__)
 
-    def _convert_data(self, source):
+    def convert_data(self, source):
         raise NotImplementedError()
 
     def select(self, selector=None, debug=False):
@@ -29,12 +29,13 @@ class BaseParser(object):
         return partial(self._select, selector=selector, debug=debug)
 
     def _select(self, url, data, selector=None, debug=False):
-        data = self._convert_data(url, data)
+        data = self.convert_data(url, data)
         if data is not False:
             if selector:
                 selected = selector(data)
                 if not selected:
-                    self.logger.warning(str(selector) + 'selected nothing' + str(url))
+                    self.logger.warning(str(selector) + 'selected nothing' +
+                                        str(url))
                     if debug:
                         print(etree.tostring(data))
                 return selected
@@ -112,7 +113,9 @@ class BaseParser(object):
                    The substitute used in the replacers parameter.
         """
         selector = self._get_selector(selector)
-        return partial(self._text, selector=selector, **kwargs)
+        func = partial(self._text, selector=selector, **kwargs)
+        func.parser = self
+        return func
 
     def _text(self, url, data, selector=None, index=None, **kwargs):
         '''
@@ -130,8 +133,10 @@ class BaseParser(object):
         Return True if a keyword is in the selector text,
         '''
         selector = self._get_selector(selector)
-        return partial(self._exists, selector=selector, key=key,
+        func = partial(self._exists, selector=selector, key=key,
                        **kwargs)
+        func.parser = self
+        return func
 
     def _exists(self, url, data, selector=None, key='', **kwargs):
         text = self._text(url, data, selector=selector, **kwargs)
@@ -144,7 +149,10 @@ class BaseParser(object):
 
     def custom_func(self, selector=None, function=None):
         selector = self._get_selector(selector)
-        return partial(self._custom_func, selector=selector, function=function)
+        func = partial(self._custom_func, selector=selector,
+                       function=function)
+        func.parser = self
+        return func
 
     def _custom_func(self, url, data, selector=None, function=None):
         for element in self._select(url, data, selector):
@@ -163,7 +171,7 @@ class HTMLParser(BaseParser):
 
     Attributes
     ----------
-    selectors : (CSSSelector, ORCSSSelector, etree.XPath, JavascriptVarSelector)
+    selectors : CSSSelector, ORCSSSelector, etree.XPath, JavascriptVarSelector
                 The type of selectors that can be used with this parsers
                 "selectors" keyword argument. If a string is provided, this
                 string will be converted into a CSSSelector or an XPath
@@ -186,7 +194,7 @@ class HTMLParser(BaseParser):
         self.scrapely_parser = None
         self.parse_escaped = parse_escaped
 
-    def _convert_data(self, url, data):
+    def convert_data(self, url, data):
         if type(data) in self._data_types:
             return data
         else:
@@ -237,6 +245,8 @@ class HTMLParser(BaseParser):
                         raise Exception('Not a valid css or xpath selector',
                                         selector)
 
+    # TODO fix this
+    '''
     def _fallback(self, model, html, source):
         if not self.scrapely_parser:
             self.scrapely_parser = Scraper()
@@ -255,6 +265,7 @@ class HTMLParser(BaseParser):
                 objct.attrs_from_dict(attr_dict)
                 yield objct
         return []
+    '''
 
     @format_docstring(selector_doc=_HTMLParser_selector_doc)
     @add_other_doc(BaseParser._modify_text)
@@ -273,7 +284,10 @@ class HTMLParser(BaseParser):
         '''
 
         selector = self._get_selector(selector)
-        return partial(self._text, selector=selector, all_text=True, **kwargs)
+        func = partial(self._text, selector=selector, all_text=True,
+                       **kwargs)
+        func.parser = self
+        return func
 
     def _text(self, url, data, selector=None, all_text=True, **kwargs):
         for element in self._select(url, data, selector):
@@ -290,7 +304,9 @@ class HTMLParser(BaseParser):
 
     def table(self, selector=None):
         selector = self._get_selector(selector)
-        return partial(self._table, selector=selector)
+        func = partial(self._table, selector=selector)
+        func.parser = self
+        return func
 
     def _table(self, url, data, selector=None):
         for element in self._select(url, data, selector):
@@ -312,8 +328,10 @@ class HTMLParser(BaseParser):
                The attribute to select from the element selected.
         '''
         selector = self._get_selector(selector)
-        return partial(self._attr, selector=selector, attr=attr,
+        func = partial(self._attr, selector=selector, attr=attr,
                        **kwargs)
+        func.parser = self
+        return func
 
     def _attr(self, url, data, selector=None, attr='', **kwargs):
         for element in self._select(url, data, selector):
@@ -331,9 +349,11 @@ class HTMLParser(BaseParser):
         ----------
         selector : str, optional
                    {selector_doc}
-        '''# .format(selector_doc=self._selector_doc)
+        '''
         selector = self._get_selector(selector)
-        return partial(self._attr, selector=selector, attr='href', **kwargs)
+        func = partial(self._attr, selector=selector, attr='href', **kwargs)
+        func.parser = self
+        return func
 
     def date(self, selector=None, fmt: str='YYYYmmdd', attr: str=None, index:
              int=None):
@@ -341,8 +361,10 @@ class HTMLParser(BaseParser):
         Returns a python date object with the specified format.
         '''
         selector = self._get_selector(selector)
-        return partial(self._date, selector=selector,
+        func = partial(self._date, selector=selector,
                        fmt=fmt, attr=attr, index=index)
+        func.parser = self
+        return func
 
     def _date(self, url, data, selector=None, fmt='', attr=None, index=None):
         for element in self._select(url, data, selector):
@@ -355,8 +377,10 @@ class HTMLParser(BaseParser):
 
     def raw_html(self, selector=None, link_replacer=''):
         selector = self._get_selector(selector)
-        return partial(self._raw_html, selector=selector,
+        func = partial(self._raw_html, selector=selector,
                        link_replacer=link_replacer)
+        func.parser = self
+        return func
 
     def _raw_html(self, url, data, selector=None, link_replacer=''):
         for element in self._select(url, data, selector):
@@ -364,13 +388,16 @@ class HTMLParser(BaseParser):
 
     def js_array(self, selector=None, var_name='', var_type=None):
         selector = self._get_selector(selector)
-        return partial(self._js_array, selector=selector, var_name=var_name,
+        func = partial(self._js_array, selector=selector, var_name=var_name,
                        var_type=var_type)
+        func.parser = self
+        return func
 
     def _js_array(self, url, data, selector=None, var_name='', var_type=None):
         var_regex = 'var\s*'+var_name+'\s*=\s*(?:new Array\(|\[)(.*)(?:\)|\]);'
         for element in self._select(url, data, selector):
-            array_string = list(self._modify_text(element.text, regex=var_regex))
+            array_string = list(self._modify_text(element.text,
+                                                  regex=var_regex))
             if array_string:
                 if var_type:
                     yield list(map(var_type, array_string[0].split(',')))
@@ -378,11 +405,14 @@ class HTMLParser(BaseParser):
             else:
                 yield False
 
-    def pagination(self, selector=None, per_page=10, url_template='{}', debug=False):
+    def pagination(self, selector=None, per_page=10, url_template='{}',
+                   debug=False):
         selector = self._get_selector(selector)
-        return partial(self._pagination, selector=selector,
+        func = partial(self._pagination, selector=selector,
                        per_page=per_page, url_template=url_template,
                        debug=debug)
+        func.parser = self
+        return func
 
     def _pagination(self, url, data, selector=None, per_page=None,
                     url_template=None, debug=False):
@@ -401,8 +431,8 @@ class HTMLParser(BaseParser):
         from .sources import WebSource
         for form in elements:
             data = {**dict(form.form_values()), **fields}
-            source = Source(url=form.action, method=form.method, duplicate=True,
-                            attrs=attrs)
+            source = WebSource(url=form.action, method=form.method,
+                               duplicate=True, attrs=attrs)
             if source.method == 'GET':
                 source.params = data
             else:
@@ -421,11 +451,8 @@ class JSONParser(BaseParser):
     '''
     name = 'JSONParser'
     _data_types = [list, dict]
-    # _dialects = {key.lower(): val for key, val in sorted(vars(xmljson).items())
-    #             if isinstance(val, type) and issubclass(val, xmljson.XMLData)}
     selectors = (_Program,)
 
-    # @add_other_doc(HTMLParser.__init__, section='Parameters')
     def __init__(self, dialect='badgerfish', invalid_tags='drop', *args,
                  **kwargs):
         '''
@@ -443,11 +470,8 @@ class JSONParser(BaseParser):
                   invalid keys.
         '''
         super().__init__()
-        # assert dialect in self._dialects, "Please use a supported dialect" + \
-        #    str(self._dialects.keys())
-        # .self.converter = self._dialects[dialect](invalid_tags=invalid_tags)
 
-    def _convert_data(self, url, data):
+    def convert_data(self, url, data):
         if data and type(data) in self._data_types:
             return data
         elif data:
@@ -476,7 +500,7 @@ class JSONParser(BaseParser):
                     self.logger.exception(str(selector) + 'cannot compile')
 
     def _select(self, url, data, selector, debug=False):
-        data = self._convert_data(url, data)
+        data = self.convert_data(url, data)
         if data:
             if selector:
                 return selector.transform(data, multiple_output=True)
@@ -485,7 +509,9 @@ class JSONParser(BaseParser):
 
     def dict(self, selector=None):
         selector = self._get_selector(selector)
-        return partial(self._dict, selector=selector)
+        func = partial(self._dict, selector=selector)
+        func.parser = self
+        return func
 
     def _dict(self, data, selector=None):
         for element in self._select(selector, data):
@@ -496,7 +522,7 @@ class TextParser(BaseParser):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
 
-    def _convert_data(self, url, data):
+    def convert_data(self, url, data):
         if type(data) != str:
             try:
                 data = str(data)
@@ -506,7 +532,7 @@ class TextParser(BaseParser):
         return data
 
     def _select(self, url, data, selector, debug=False):
-        data = self._convert_data(url, data)
+        data = self.convert_data(url, data)
         if data:
             if selector:
                 return data.split(selector)
@@ -519,11 +545,12 @@ class TextParser(BaseParser):
 
 class CSVParser(BaseParser):
     data_types = (list, tuple)
+
     def __init__(self, delimiter=',', **kwargs):
         super().__init__(**kwargs)
         self.delimiter = delimiter
 
-    def _convert_data(self, url, data):
+    def convert_data(self, url, data):
         if type(data) in self.data_types:
             return data
         elif type(data) == str:
@@ -534,7 +561,7 @@ class CSVParser(BaseParser):
             return False
 
     def _select(self, url, data, selector, debug=False):
-        data = self._convert_data(url, data)
+        data = self.convert_data(url, data)
         if selector and data:
             return wrap_list(data[selector])
         return data
