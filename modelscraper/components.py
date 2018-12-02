@@ -267,7 +267,6 @@ class BaseSource(object):
                     attrs = {}
 
                 kwargs = self.get_kwargs()
-                # url_hash = self._hash_url(url, kwargs, attrs)
 
                 if type(url) is str:
                     url = self.url_template.format(url)
@@ -276,10 +275,6 @@ class BaseSource(object):
                 self.in_q.put((url, kwargs, attrs))
                 self.to_parse += 1
                 self.add_to_seen(url)
-
-    def _hash_url(self, url, kwargs={}, attrs={}):
-        url_hash = hash(str(url) + str(kwargs) + str(attrs))
-        return url_hash
 
     def add_to_seen(self, url):
         self.seen.add(url)
@@ -403,13 +398,13 @@ class BaseSourceWorker(Thread):
         return content
 
 
-@add_other_doc(BaseComponent, 'Parameters')
 class Attr(BaseComponent):
     '''
     An Attr is used to hold a value for a model.
     This value is created by selecting data from the source using the selector,
     after which the "func" is called on the selected data.
     '''
+    @add_other_doc(BaseComponent.__init__, 'Parameters')
     def __init__(self, name='', emits=None, func=None, value=None,
                  attr_condition={}, source_condition={}, from_source=False,
                  type=None, transfers=False, raw_data=False, multiple=False):
@@ -541,10 +536,14 @@ def attr_dict(attrs):
 
 
 class Model(BaseComponent):
+    @add_other_doc(BaseComponen.__init__, 'Parameters')
     def __init__(self, name='', emits=None, attrs=[], dated=False, database=[],
                  preparser=None, required=False, selector=None, source=[],
                  table='', kws={}, overwrite=True, definition=False,
                  debug=False):
+        '''
+        The Model is a class that connects to Sources to parse the data.
+        '''
         super().__init__(name=name, emits=emits)
         self.attrs = attr_dict(attrs)
         self.dated = dated
@@ -706,6 +705,7 @@ class Model(BaseComponent):
                     if no_value == self.amount_of_attrs:
                         for source in self.source:
                             source.add_source(url, attrs, re_insert=True)
+                        continue
 
                 for attr in self.value_attrs:
                     obj[attr.name] = attr.value
@@ -717,6 +717,7 @@ class Model(BaseComponent):
 
                 if self.dated:
                     obj['_date'] = str(datetime.now())
+
                 objects.append(obj)
             if self.debug:
                 print(self.name, url, 'parsed:')
