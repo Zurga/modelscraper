@@ -830,8 +830,8 @@ class Scraper(object):
         Every iteration processes the data retrieved from one url for each
         Source.
         '''
-        self.start_databases()
-        self.start_sources()
+        self.call_start(self.databases)
+        self.call_start(self.sources)
         while self.sources:
             empty = []
             for source in self.sources:
@@ -861,19 +861,15 @@ class Scraper(object):
                     continue
             for source in empty:
                 self.sources.discard(source)
-        self.kill_databases()
+        self.call_stop(self.databases)
 
-    def start_sources(self):
-        for source in self.sources:
-            source.start()
+    def call_start(self, iterator):
+        for obj in iterator:
+            obj.start()
 
-    def start_databases(self):
-        for db in self.databases:
-            db.start()
-
-    def kill_databases(self):
-        for db in self.databases:
-            db.stop()
+    def call_stop(self, iterator):
+        for obj in iterator:
+            obj.stop()
 
     def __repr__(self):
         repr_string = self.name + ':\n'
