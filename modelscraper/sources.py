@@ -12,7 +12,7 @@ import requests
 
 
 from .components import BaseSource, BaseSourceWorker
-# from .helpers import str_as_tuple
+from .helpers import add_other_doc
 
 
 class WebSourceWorker(BaseSourceWorker):
@@ -70,9 +70,10 @@ class WebSource(BaseSource):
     kwargs = ('headers', 'data', 'form', 'params', 'cookies')
     source_worker = WebSourceWorker
 
+    @add_other_doc(BaseSource.__init__, 'parameters')
     def __init__(self, cookies=None, data=[], domain='', form=[],
                  func='get', headers={}, json_key='', params=[],
-                 session=requests.Session(),
+                 session=requests.Session(), cache=False,
                  time_out=1, user_agent=True, *args, **kwargs):
         '''
         Parameters
@@ -117,6 +118,9 @@ class WebSource(BaseSource):
         time_out : int, optional
                    The amount of seconds that are in between each request made
                    by a WebSourceWorker.
+
+        cache : bool, optional
+                Whether or not to using caching.
         '''
         super().__init__(*args, **kwargs)
         self.cookies = cookies
@@ -129,6 +133,9 @@ class WebSource(BaseSource):
         self.session = session
         self.time_out = time_out
         self.user_agent = user_agent
+        if cache:
+            from diskcache import Cache
+            self.cache = Cache('/tmp/modelscraper_cache')
 
     def get_kwargs(self, objct=None):
         # Get the kwargs that might be obtained from the object if passed.
