@@ -108,6 +108,7 @@ class MongoDB(BaseDatabase):
     name = 'MongoDB'
     forbidden_chars = ('.', '$')
 
+    @add_other_doc(BaseDatabase.__init__, 'Parameters')
     def __init__(self, host=None, port=None, *args, **kwargs):
         '''
         Parameters
@@ -383,12 +384,14 @@ class SqliteWorker(BaseDatabaseImplementation):
                 for obj, url in zip(objects, urls):
                     db_id = urls_ids[str(url)]
                     if attr.multiple and len(obj[attr.name]) > 1:
-                        values = list(zip_longest(obj[attr.name], [db_id]))
-                        print(values)
+                        values = list(zip_longest(obj[attr.name], [db_id],
+                                                  fillvalue=db_id))
+                        con.executemany(self.insert_query.format(
+                            table=table_name), values)
                     else:
                         values = (db_id, obj[attr.name])
-                    con.execute(self.insert_query.format(table=table_name),
-                                values)
+                        con.execute(self.insert_query.format(table=table_name),
+                                    values)
 
     def urls_ids(self, table, urls):
         id_query = self.id_query.format(table=table)
