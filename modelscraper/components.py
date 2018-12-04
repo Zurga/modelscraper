@@ -490,16 +490,13 @@ class Attr(BaseComponent):
     def _evaluate_condition(self, objct):
         # TODO fix this ugly bit of code
         if self.source_condition:
-            expression = ''
-
             for operator, attrs in self.source_condition.items():
-                expression += (' '+operator+' ').join(
-                    [str(value) + c for name, c in attrs.items()
-                        for value in objct[name]])
-            if expression:
-                return eval(expression, {}, {})
-            else:
-                return False
+                if operator == 'or':
+                    return any(func(objct[attr_name])
+                               for attr_name, func in attrs.items())
+                elif operator == 'and':
+                    return all(func(objct[attr_name])
+                               for attr_name, func in attrs.items())
         return True
 
     def parse(self, url, data):
@@ -536,10 +533,10 @@ def attr_dict(attrs):
 
 
 class Model(BaseComponent):
-    @add_other_doc(BaseComponen.__init__, 'Parameters')
-    def __init__(self, name='', emits=None, attrs=[], dated=False, database=[],
-                 preparser=None, required=False, selector=None, source=[],
-                 table='', kws={}, overwrite=True, definition=False,
+    @add_other_doc(BaseComponent.__init__, 'Parameters')
+    def __init__(self, name='', emits=None, urls=[], attrs=[], dated=False,
+                 database=[], preparser=None, required=False, selector=None,
+                 source=[], table='', kws={}, overwrite=True, definition=False,
                  debug=False):
         '''
         The Model is a class that connects to Sources to parse the data.
@@ -557,6 +554,7 @@ class Model(BaseComponent):
         self.table = table
         self.overwrite = overwrite
         self.definition = definition
+        self.urls = urls
 
         # Get the urls of the objects that have already been parsed to avoid
         # overwriting them.
@@ -599,8 +597,6 @@ class Model(BaseComponent):
                                   func in attr.func)
                 most_used = parsers.most_common(1)[0][0]
                 self.selector = [most_used.convert_data]
-            else:
-                self._preparser = self.selector
 
             self.value_attrs = [attr for attr in self.attrs
                                 if attr not in self.func_attrs
