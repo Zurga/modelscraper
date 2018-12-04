@@ -523,16 +523,20 @@ class TextParser(BaseParser):
         super().__init__(**kwargs)
 
     def convert_data(self, url, data):
-        if type(data) != str:
-            try:
-                data = str(data)
-            except Exception as E:
-                self.logger.warning('Unable to convert data' + str(url))
-                data = ''
-        return data
+        try:
+            if isinstance(data, str):
+                return [data]
+            if isinstance(data, (list, tuple)):
+                return [''.join(data)]
+            else:
+                return [str(data)]
+        except Exception as E:
+            self.logger.warning('Unable to convert data' + str(url))
+            print('unable to convert data', url)
+            return ['']
 
     def _select(self, url, data, selector, debug=False):
-        data = self.convert_data(url, data)
+        data = self.convert_data(url, data)[0]
         if data:
             if selector:
                 return data.split(selector)
