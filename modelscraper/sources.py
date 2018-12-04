@@ -3,6 +3,8 @@ import time
 import subprocess
 import urllib
 import json
+import shutil
+import string
 
 
 from selenium.common.exceptions import JavascriptException
@@ -12,7 +14,7 @@ import requests
 
 
 from .components import BaseSource, BaseSourceWorker
-from .helpers import add_other_doc
+from .helpers import add_other_doc, wrap_list, str_as_tuple
 
 
 class WebSourceWorker(BaseSourceWorker):
@@ -70,7 +72,7 @@ class WebSource(BaseSource):
     kwargs = ('headers', 'data', 'form', 'params', 'cookies')
     source_worker = WebSourceWorker
 
-    @add_other_doc(BaseSource.__init__, 'parameters')
+    @add_other_doc(BaseSource.__init__, 'Parameters')
     def __init__(self, cookies=None, data=[], domain='', form=[],
                  func='get', headers={}, json_key='', params=[],
                  session=requests.Session(), cache=False,
@@ -212,15 +214,42 @@ class BrowserSourceWorker(WebSourceWorker):
 
 
 class BrowserSource(WebSource):
+    '''
+    A class that uses SeleniumBrowser module to visit an url and return its data.
+    This class allows for the execution of Javascript code against a loaded DOM
+    Tree. For now, only Firefox is supported.
+    '''
     kwargs = ('data', 'form', 'params', 'cookies')
     source_worker = BrowserSourceWorker
 
-    def __init__(self, browser='firefox-esr', browser_executable='',
+    @add_other_doc(WebSource.__init__, 'Parameters')
+    def __init__(self, browser='firefox', browser_executable='',
                  script='', script_only=False, *args, **kwargs):
+        '''
+        Parameters
+        ----------
+        browser : str, optional
+                  Which browser to use with the Selenium module
+
+        browser_executable : str, optional
+                             The path to the browser executable to be used.
+                             If left unspecified, the browser name in the
+                             browser keyword is used with a call to the
+                             "which" command.
+
+        script : str, optional
+                 A script that is executed on each page after the page has
+                 been downloaded. The result of the script is appended to the
+                 HTML file inbetween the <script id="result"></script> tags.
+
+        script_only :  bool, optional
+                       If set to True, only the result from the script is
+                       returned as the data.
+        '''
         self.script = script
         self.script_only = script_only
 
-        assert browser.lower() == 'firefox-esr', \
+        assert browser.lower() == 'firefox', \
             'Please use only firefox  as the browser, more will be added later'
         from selenium.webdriver.firefox.options import Options
         from selenium.webdriver.firefox.firefox_binary import FirefoxBinary
@@ -263,15 +292,27 @@ class FileSourceWorker(BaseSourceWorker):
 
 
 class FileSource(BaseSource):
+    '''
+    A Source that reads the contents of files on the local machine.
+    It uses the built-in 'open' method to open the files.
+    '''
     source_worker = FileSourceWorker
     kwargs = ['buffering']
     func = open
-    buffering = False
+
+    @add_other_doc(BaseSource.__init__, 'Parameters')
+    def __init__(self, buffering=False, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.buffering = buffering
 
 
 class ProgramSourceWorker(BaseSourceWorker):
     def retrieve(self, url, kwargs):
-        function = self.parent.func.format(url)
+        print(kwargs)
+        function = '{} {} {}'.format(self.parent.func, self.parent.arguments,
+                                     str(url))
+        if self.parent.debug:
+            self.logger.debug('Method to execute: ' + ' '.join(url))
         result = subprocess.run(function, shell=True,
                                 stdout=subprocess.PIPE)
         try:
@@ -284,7 +325,34 @@ class ProgramSourceWorker(BaseSourceWorker):
 
 
 class ProgramSource(BaseSource):
+    '''
+    This class can be used to execute programs outside of Python. Any
+    program that exists on the local machine can be executed.
+    '''
     source_worker = ProgramSourceWorker
+    kwargs = ['arguments']
+
+    @add_other_doc(BaseSource.__init__, 'Parameters')
+    def __init__(self, arguments='', *args, **kwargs):
+        '''
+        Parameters
+        ----------
+        program : str
+               The program which will be executed for each url.
+               If the string is formattable, the url will be placed
+               inside the {} characters.
+
+        arguments : (list or tuple) of str
+                    The arguments to be added to the program.
+        '''
+        super().__init__(*args, **kwargs)
+        assert self.func and isinstance(self.func, str), + \
+            'Please specify string as a function use with the ProgramSource.'
+        self.arguments = arguments
+
+        if shutil.which(self.func.split(' ')[0]) is None:
+            raise Exception('The application that you specified is not ' +
+                            'available on this operating system.')
 
 
 class ModuleSourceWorker(BaseSourceWorker):
