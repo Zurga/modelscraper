@@ -1,76 +1,99 @@
-from modelscraper.components import ScrapeModel, Phase, Template, Attr, Source
+from modelscraper import Scraper, Model, Attr, WebSource, MongoDB, HTMLParser
 import string
 
 
-name_count = Attr(func='sel_text', kws={'numbers': True})
-name_list = Template(
-    name='name_list', selector='tr.data',
-    db_type='MongoDB', db='names', table='name_urls',
+name_list_source = WebSource(
+    urls=["http://www.meertens.knaw.nl/nvb/naam/begintmet/" + l for l in
+          string.ascii_lowercase],
+    test_urls=['http://www.meertens.knaw.nl/nvb/naam/begintmet/a'])
+name_source = WebSource(
+    test_urls=['http://www.meertens.knaw.nl/nvb/populariteit/naam/A'])
+name_history_source = WebSource()
+data_source = WebSource()
+database = MongoDB(db='names')
+parser = HTMLParser()
+
+
+def greater_then_10(x):
+    return x > 10 if isinstance(x, int) else False
+
+
+name_list = Model(
+    source=name_list_source,
+    name='name_list', selector=parser.select('tr.data'),
+    database=database, table='name_urls',
     attrs=[
-        Attr(name='url', selector='td:nth-of-type(1) a',
-             func='sel_url', source={'active': False},
-             source_condition={'or': {'men': '> 10', 'women': '> 10'}}),
-        name_count(name='men', selector='td:nth-of-type(2)'),
-        name_count(name='women', selector='td:nth-of-type(3)'),
+        Attr(name='url', func=parser.url(selector='td:nth-of-type(1) a'),
+             emits=name_source,
+             source_condition={'or': {'men': greater_then_10, 'women':
+                                      greater_then_10}}),
+        Attr(name='men', func=parser.text(selector='td:nth-of-type(2)',
+                                          numbers=True)),
+        Attr(name='women', func=parser.text(selector='td:nth-of-type(3)',
+                                            numbers=True)),
     ]
 )
 
-next_page = Template(
-    name='next_url', selector='.right',
-    attrs=[Attr(name='next', selector='a',  func='sel_url', source=True)]
+next_page = Model(
+    source=name_list_source,
+    name='next_url', selector=parser.select('.right a'),
+    attrs=[Attr(name='next', func=parser.url(),
+                emits=name_list_source)]
 )
 
-name_template = Template(
-    name='name', db_type='MongoDB', db='names',
+name_template = Model(
+    source=name_source,
+    name='name',
+    database=database,
     table='name_count', attrs=[
-        Attr(name='name', selector='.name', func='sel_text'),
-        name_count(name='men',
-             selector='tr:nth-of-type(2) td:nth-of-type(3)'),
-        name_count(name='men_second',
-             selector='tr:nth-of-type(3) td:nth-of-type(3)'),
-        name_count(name='women',
-             selector='tr:nth-of-type(6) td:nth-of-type(3)'),
-        name_count(name='women_second',
-             selector='tr:nth-of-type(7) td:nth-of-type(3)'),
+        Attr(name='name', func=parser.text(selector='.name')),
+        Attr(name='men', func=parser.text(
+            selector='tr:nth-of-type(2) td:nth-of-type(3)',
+            numbers=True)),
+        Attr(name='men_second', func=parser.text(
+            selector='tr:nth-of-type(3) td:nth-of-type(3)',
+            numbers=True)),
+        Attr(name='women', func=parser.text(
+            selector='tr:nth-of-type(6) td:nth-of-type(3)',
+            numbers=True)),
+        Attr(name='women_second', func=parser.text(
+            selector='tr:nth-of-type(7) td:nth-of-type(3)',
+            numbers=True)),
     ]
 )
 
-data_attr = Attr(name='url', func='sel_url',
-                 source=Source(active=False, parent=True,
-                 copy_attrs='gender'))
-sex_attr = Attr(name='gender')
-data_template = Template(name='data_url')
+data_attr = Attr(name='url', func=parser.url(), emits=data_source)
+sex_attr = Attr(name='gender', transfers=True)
 
-graph_template = Template(
-    name='history', selector='#content', db_type='MongoDB', db='names',
-    table='history', kws={'key': 'name'}, attrs=[
-        Attr(name='name', selector='div.name', func='sel_text'),
-        Attr(name='years', selector='script', func='sel_js_array',
-             kws={'var_name': 'year_list', 'var_type': int}),
-        Attr(name='values', selector='script', func='sel_js_array',
-             kws={'var_name': 'value_list', 'var_type': float}),
+men_first = Model(name='men_first', source=name_source,
+                  selector=parser.select('a[href*="absoluut/man/eerstenaam"]'),
+                  attrs=[data_attr, sex_attr(value='men')])
+men_second = Model(name='men_second', source=name_source,
+                   selector=parser.select('a[href*="absoluut/man/volgnaam"]'),
+                   attrs=[data_attr, sex_attr(value='men_second')])
+women_first = Model(name='women_first', source=name_source,
+                    selector=parser.select('a[href*="absoluut/vrouw/eerstenaam"]'),
+                    attrs=[data_attr, sex_attr(value='women')])
+women_second = Model(name='women_second', source=name_source,
+                     selector=parser.select('a[href*="absoluut/vrouw/volgnaam"]'),
+                     attrs=[data_attr, sex_attr(value='women_second')])
+
+graph_template = Model(
+    source=data_source,
+    name='history', selector=parser.select('#content'),
+    database=database,
+    debug=True,
+    table='history',  attrs=[
+        Attr(name='name', func=parser.text(selector='div.name')),
+        Attr(name='years', multiple=True, func=parser.js_array(
+            selector='script', var_name='year_list', var_type=int)),
+        Attr(name='values', multiple=True, func=parser.js_array(
+            selector='script', var_name='year_list', var_type=float)),
+        Attr(name='gender', from_source=True),
     ]
 )
-test = [Source(url='http://www.meertens.knaw.nl/nvb/naam/is/Jim')]
-sources = (Source(url="http://www.meertens.knaw.nl/nvb/naam/begintmet/" + l)
-                        for l in string.ascii_lowercase)
-meertens = ScrapeModel(
-    name='namen', domain='http://www.meertens.knaw.nl/', num_getters=2,
-    phases=[
-        Phase(sources=sources, templates=[name_list, next_page]
-        ),
-        Phase(templates=[
-            name_template,
-            data_template(selector='a[href*="absoluut/man/eerstenaam"]',
-                          attrs=[data_attr, sex_attr(value='men')]),
-            data_template(selector='a[href*="absoluut/man/volgnaam"]',
-                          attrs=[data_attr, sex_attr(value='men_second')]),
-            data_template(selector='a[href*="absoluut/vrouw/eerstenaam"]',
-                          attrs=[data_attr, sex_attr(value='women')]),
-            data_template(selector='a[href*="absoluut/vrouw/volgnaam"]',
-                          attrs=[data_attr, sex_attr(value='women_second')]),
-            ]
-        ),
-        Phase(templates=[graph_template])
-    ]
+meertens = Scraper(
+    name='namen',
+    models=[name_list, next_page, men_first, men_second, women_first,
+            women_second, graph_template]
 )
