@@ -130,7 +130,7 @@ class BaseParser(object):
 
     def exists(self, selector=None, key: str='', **kwargs):
         '''
-        Return True if a keyword is in the selector text,
+        Return True if a keyword is in the text of the element selected.
         '''
         selector = self._get_selector(selector)
         func = partial(self._exists, selector=selector, key=key,
@@ -148,6 +148,26 @@ class BaseParser(object):
                     yield False
 
     def custom_func(self, selector=None, function=None):
+        '''
+        Return the result of a custom function provided in the keyword
+        arguments. The advantage of this method is that the data that is
+        sent to the given function will be in the format that the parser
+        understands. If HTMLParser.custom_func is used, the data will be
+        an lxml.etree.
+
+        Parameters
+        ----------
+        selector : str, optional
+                   The selector to select elements in the text.
+
+        function : function
+                   The function that will be executed against the data.
+                   It should only accept one argument which is a selected
+                   element i.e.
+                   >>> def something(element):
+                   >>>     return element.strip()
+        '''
+        assert function, "Please provide a custom function to be executed"
         selector = self._get_selector(selector)
         func = partial(self._custom_func, selector=selector,
                        function=function)
